@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -181,7 +182,7 @@ func NewAgent(cfg *Config) *Agent {
 	for i, addr := range cfg.Addrs {
 		d := &destination{
 			addr:     addr,
-			client:   &http.Client{Transport: &http.Transport{}},
+			client:   &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second},
 			q:        mustOpenQueue(filepath.Join(cfg.DataPath, addr), cfg.MaxPendingBytes),
 			retryMin: cmp.Or(cfg.RetryMinInterval, DefaultRetryMinInterval),
 			retryMax: cmp.Or(cfg.RetryMaxInterval, DefaultRetryMaxInterval),
@@ -220,7 +221,16 @@ func NewAgent(cfg *Config) *Agent {
 // write the same bytes to EVERY destination's queue: encoding once and writing
 // N times is the cheap kind of replication.
 func (a *Agent) MustAddRows(rows []minilog.Row) {
-	panic("TODO stage 11: implement Agent.MustAddRows")
+	a.mu.Lock()
+	a.rows = append(a.rows, rows...)
+	for _, row := range rows {
+		a.rowSize += len(internalapi.MarshalRow(nil, &row))
+	}
+	full := a.rowSize >= a.maxBlockSize
+	a.mu.Unlock()
+	if full {
+		a.MustFlush()
+	}
 }
 
 // MustFlush pushes the in-memory block to every destination's queue and
@@ -229,7 +239,20 @@ func (a *Agent) MustAddRows(rows []minilog.Row) {
 // This is the call that makes "on disk" true right now instead of within
 // FlushInterval. The senders pick it up from there.
 func (a *Agent) MustFlush() {
-	panic("TODO stage 11: implement Agent.MustFlush")
+	a.mu.Lock()
+	rows := a.rows
+	a.rows, a.rowSize = nil, 0
+	a.mu.Unlock()
+	if len(rows) == 0 {
+		return
+	}
+	data := internalapi.MarshalRowBatch(nil, rows)
+	for _, dest := range a.dests {
+		dest.mu.Lock()
+		dest.q.MustWriteBlock(data)
+		dest.cond.Signal()
+		dest.mu.Unlock()
+	}
 }
 
 // WaitDrained flushes, then waits until every destination's queue is empty
@@ -245,7 +268,16 @@ func (a *Agent) WaitDrained(timeout time.Duration) bool {
 
 // Stats returns per-destination counters, by Addrs index.
 func (a *Agent) Stats() []DestStats {
-	panic("TODO stage 11: implement Agent.Stats")
+	destStats := make([]DestStats, len(a.dests))
+	for i, dest := range a.dests {
+		destStats[i].Addr = dest.addr
+		destStats[i].Queue = dest.q.Stats()
+		destStats[i].BlocksSent = dest.blocksSent.Load()
+		destStats[i].BytesSent = dest.bytesSent.Load()
+		destStats[i].Retries = dest.retries.Load()
+		destStats[i].BlocksRejected = dest.blockRejected.Load()
+	}
+	return destStats
 }
 
 // MustClose flushes, stops the senders, and closes the queues.
@@ -334,7 +366,52 @@ func (d *destination) sendBlock(block []byte) (sendResult, error) {
 // counted as dropped, and the "oldest" that survives is no longer the
 // oldest. The disk-bound test checks exactly which rows arrive.
 func (d *destination) runSender(stopCh <-chan struct{}) {
-	panic("TODO stage 11: implement destination.runSender")
+	for {
+		d.mu.Lock()
+		var block []byte
+		for {
+			if d.closed {
+				d.mu.Unlock()
+				return
+			}
+			var ok bool
+			block, ok = d.q.MustPeekBlock(nil)
+			if ok {
+				break
+			}
+			d.cond.Wait()
+		}
+		d.mu.Unlock()
+		for attempt := 0; ; attempt++ {
+			result, err := d.sendBlock(block)
+			if result == sendStored {
+				d.blocksSent.Add(1)
+				d.bytesSent.Add(int64(len(block)))
+				break
+			}
+			if result == sendRejected {
+				d.blockRejected.Add(1)
+				log.Printf("server %s rejected a block dropping it: %v", d.addr, err)
+				break
+			}
+			d.retries.Add(1)
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(backoff(attempt, d.retryMin, d.retryMax)):
+			}
+			d.mu.Lock()
+			b, ok := d.q.MustPeekBlock(block[:0])
+			d.mu.Unlock()
+			if !ok {
+				break
+			}
+			block = b
+		}
+		d.mu.Lock()
+		d.q.MustAck()
+		d.mu.Unlock()
+	}
 }
 
 // backoff returns how long to wait before retry number attempt (0-based):
