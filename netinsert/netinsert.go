@@ -97,7 +97,6 @@ type Storage struct {
 	// You will need: a []*storageNode, a *router, a buffer pool, a stop
 	// channel, and a WaitGroup for the background flushers.
 	//
-	// TODO stage 7
 	nodes   []*storageNode
 	router  *router
 	bufPool sync.Pool
@@ -124,7 +123,6 @@ type storageNode struct {
 	// spurious EOFs -- VictoriaLogs has a comment and a linked bug about
 	// exactly this.
 	//
-	// TODO stage 7
 	addr          string
 	client        *http.Client
 	pending       []minilog.Row

@@ -190,12 +190,34 @@ func NewAgent(cfg *Config) *Agent {
 		d.cond = sync.NewCond(&d.mu)
 		destinations[i] = d
 	}
-	return &Agent{
+	a := &Agent{
 		dests:         destinations,
 		maxBlockSize:  cmp.Or(cfg.MaxBlockSize, DefaultMaxBlockSize),
 		flushInterval: cmp.Or(cfg.FlushInterval, DefaultFlushInterval),
 		stop:          make(chan struct{}),
 	}
+	for _, dest := range destinations {
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			dest.runSender(a.stop)
+		}()
+	}
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		t := time.NewTicker(a.flushInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				a.MustFlush()
+			case <-a.stop:
+				return
+			}
+		}
+	}()
+	return a
 }
 
 // MustAddRows appends rows to the in-memory block and returns.
@@ -263,7 +285,29 @@ func (a *Agent) MustFlush() {
 // destination down is correct behaviour, not a failure: the rows are on disk
 // and will go when the destination returns.
 func (a *Agent) WaitDrained(timeout time.Duration) bool {
-	panic("TODO stage 11: implement Agent.WaitDrained")
+	a.MustFlush()
+	deadline := time.Now().Add(timeout)
+	for {
+		if a.drained() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (a *Agent) drained() bool {
+	for _, dest := range a.dests {
+		dest.mu.Lock()
+		pending := dest.q.Stats().PendingBytes
+		dest.mu.Unlock()
+		if pending != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Stats returns per-destination counters, by Addrs index.
@@ -271,7 +315,9 @@ func (a *Agent) Stats() []DestStats {
 	destStats := make([]DestStats, len(a.dests))
 	for i, dest := range a.dests {
 		destStats[i].Addr = dest.addr
+		dest.mu.Lock()
 		destStats[i].Queue = dest.q.Stats()
+		dest.mu.Unlock()
 		destStats[i].BlocksSent = dest.blocksSent.Load()
 		destStats[i].BytesSent = dest.bytesSent.Load()
 		destStats[i].Retries = dest.retries.Load()
@@ -289,7 +335,30 @@ func (a *Agent) Stats() []DestStats {
 // choose between hanging and dropping. The queue is what removed that
 // choice.
 func (a *Agent) MustClose() {
-	panic("TODO stage 11: implement Agent.MustClose")
+	a.MustFlush()
+	for _, dest := range a.dests {
+		dest.mu.Lock()
+		dest.closed = true
+		dest.cond.Broadcast()
+		dest.mu.Unlock()
+	}
+	close(a.stop)
+	done := make(chan struct{})
+	go func() {
+		a.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		log.Printf("agent: senders did not stop in 5s; leaving queue open")
+		return
+	}
+	for _, dest := range a.dests {
+		dest.mu.Lock()
+		dest.q.MustClose()
+		dest.mu.Unlock()
+	}
 }
 
 // sendResult is what one attempt to deliver a block came back with.
