@@ -1,5 +1,5 @@
-// Command minilogd is the one binary. It is a storage node, or an
-// insert+select node, depending on whether -storageNode was passed.
+// Command minilogd is the one binary. It is a storage node, an insert+select
+// node, or (stage 12) an agent, depending on which flags were passed.
 //
 // ---------------------------------------------------------------------------
 // STAGE 6 -- YOUR IMPLEMENTATION GOES HERE.
@@ -22,7 +22,13 @@
 //	./minilogd -storageNode=127.0.0.1:9001,127.0.0.1:9002,127.0.0.1:9003 \
 //	           -httpListenAddr=127.0.0.1:9000
 //
-// One flag decides the role, and the same executable serves both. That is not
+// Agent -- STAGE 12. Owns no data and no routing: accepts logs, queues them on
+// disk, and delivers every block to every destination:
+//
+//	./minilogd -remoteWrite.addrs=127.0.0.1:9000 -tmpDataPath=./agent-data \
+//	           -httpListenAddr=127.0.0.1:9429 -tail=/var/log/app.log
+//
+// One flag decides the role, and the same executable serves all three. That is not
 // a packaging convenience -- it is what makes "migrate a single node into a
 // cluster" a config change rather than a data migration. A running single node
 // becomes a storage node the moment somebody points a -storageNode list at it,
@@ -55,7 +61,15 @@ func main() {
 	storageNode := flag.String("storageNode", "", "storage node addr list")
 	httpListenAddr := flag.String("httpListenAddr", "127.0.0.1:9000", "server addr")
 	storageDataPath := flag.String("storageDataPath", "", "addr of the storage")
+	// STAGE 12 -- agent mode.
+	remoteWrite := flag.String("remoteWrite.addrs", "", "agent mode: comma-separated destinations; every block goes to every one")
+	tmpDataPath := flag.String("tmpDataPath", "", "agent mode: directory for the on-disk queues and tail checkpoints")
+	tail := flag.String("tail", "", "agent mode: comma-separated log files to follow")
 	flag.Parse()
+	if *remoteWrite != "" {
+		runAgent(strings.Split(*remoteWrite, ","), *tmpDataPath, *tail, *httpListenAddr)
+		return
+	}
 	if *storageNode != "" {
 		storageNodesList := strings.Split(*storageNode, ",")
 		runInsertSelectNode(storageNodesList, *httpListenAddr)
@@ -73,6 +87,26 @@ func main() {
 //
 // Do NOT try to make SIGKILL survivable here. It is not, by design -- that is
 // what cmd/crashtest measures and what a WAL would change.
+// runAgent runs the process as an agent. STAGE 12.
+//
+// Build, in this order:
+//
+//  1. agent.NewAgent with Addrs = destinations and DataPath = tmpDataPath.
+//  2. agent.NewReceiver(ag, nil) served on listenAddr, so `curl` works.
+//  3. if tailPaths != "": agent.NewTailer with Paths = the split list and
+//     CheckpointPath = <tmpDataPath>/checkpoints.json.
+//  4. wait for SIGINT/SIGTERM, then shut down in the order that loses nothing:
+//     stop the HTTP server first (no new rows), then tailer.MustClose (its last
+//     poll hands rows to the agent), then ag.MustClose (flush, stop senders).
+//     Close them the other way round and the tailer's final rows go into an
+//     agent that has already closed.
+//
+// Note what is absent: no "wait until drained" on shutdown. The backlog stays on
+// disk and is sent after the next start. That is what vlagent does too.
+func runAgent(destinations []string, tmpDataPath, tailPaths, listenAddr string) {
+	panic("TODO stage 12: implement runAgent")
+}
+
 func runStorageNode(dataPath, listenAddr string) {
 	s := minilog.MustOpenStorage(dataPath, &minilog.Config{ShardsCount: 0, RetentionDays: 0})
 	handler := internalapi.NewStorageNodeHandler(s)
@@ -164,6 +198,19 @@ func (n *netStorageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func runInsertSelectNode(storageNodeAddrs []string, listenAddr string) {
 	s := netstorage.NewStorage(&netstorage.Config{Addrs: storageNodeAddrs})
 	handler := &netStorageHandler{s: s}
+	// STAGE 12: an agent POSTs MarshalRowBatch bodies to internalapi.InsertPath
+	// on this node, and right now only a storage node answers that, so the
+	// path agent -> insert node -> storage nodes does not exist in the binary.
+	// netStorageHandler ignores the path, so it cannot just be extended.
+	// Route by path instead:
+	//
+	//	mux := http.NewServeMux()
+	//	mux.Handle("/internal/", internalapi.NewStorageNodeHandler(s))
+	//	mux.Handle("/", handler)
+	//
+	// internalapi.NewStorageNodeHandler serves any minilog.LogStorage, and
+	// netstorage.Storage is one -- see newInsertNode in harness/stage12_test.go
+	// for the same wiring under test. Then serve mux instead of handler below.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {

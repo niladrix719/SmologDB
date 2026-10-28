@@ -309,8 +309,8 @@ func TestStage11OldestDropAtDiskBound(t *testing.T) {
 		t.Fatalf("seq %s (first row of the oldest surviving block) is missing", oldestKept)
 	}
 	if _, ok := seqs["000000"]; ok {
-		t.Fatalf("seq 000000 arrived: the OLDEST block survived and a newer one was dropped.\n"+
-			"Drop from the reader end, not the writer end. During an outage the\n"+
+		t.Fatalf("seq 000000 arrived: the OLDEST block survived and a newer one was dropped.\n" +
+			"Drop from the reader end, not the writer end. During an outage the\n" +
 			"newest rows are the ones about the outage.")
 	}
 	t.Logf("MEASUREMENT queue bound %d bytes: %d of %d blocks dropped (oldest), newest %d rows delivered",

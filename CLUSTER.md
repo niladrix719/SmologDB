@@ -444,6 +444,60 @@ the word, and it is fifteen lines once the queue exists.
 
 ---
 
+### Stage 12 -- the agent's inputs
+
+Stage 11 built the second half of `vlagent`: a durable queue and a sender per
+destination. Nothing could feed it except a Go call. This stage adds the first
+half -- the part that makes it an *ingestion* component -- and wires the whole
+path together:
+
+```
+curl / shipper -> receiver --\
+                              +-> agent -> disk queue -> insert node -> storage nodes
+log file -> tailer ----------/        (never routes)     (routes)
+```
+
+Files, all in `agent/` except the last:
+
+- `receiver.go` -- `POST /insert/jsonline`: newline-delimited JSON in, rows out.
+  `ParseJSONLine` is the interesting part. A log line is not a `Row`: it has no
+  `StreamID`, no nanosecond timestamp, and its fields are not sorted. The rules
+  that bite: a nanosecond timestamp does not survive `float64`; a time field is
+  *consumed* and must not stay in the row; fields must come out sorted by name
+  because the block writer assumes it; and a bad line must reject the *whole*
+  request, or a client's retry stores the good half twice.
+- `tailer.go` -- follows files like `tail -F` and checkpoints how far it got.
+  It has state that outlives it, so it has the queue's problem again:
+  the checkpoint must be right after a crash at any point. The rule is one line --
+  **flush the sink, then save the checkpoint** -- and `TestStage12CheckpointNever
+  RunsAheadOfFlush` watches for the window from outside. Along the way: a half-written
+  line must not be consumed, and a truncated file must restart from zero.
+- `cmd/minilogd/main.go` -- `-remoteWrite.addrs`, `-tmpDataPath`, `-tail`: the
+  agent mode (`runAgent`), and the insert node learning to serve `InsertPath`
+  so that `agent -> insert node` works in the binary and not only in the harness.
+
+**Decisions the stubs ask you to make and write down:**
+
+- Atomic or streaming request handling. The receiver parses everything, then
+  hands the sink one batch. The real one streams and cannot. What does each cost?
+- Where the stream labels come from. `app`? `host`? A request id? What does each
+  choice do to stage 7's routing and to the Zipf problem?
+- Poll or notify. The tailer polls; the real one does not. At what scale does
+  that stop being a defensible shortcut?
+
+**Measures:**
+
+- **The agent does not route.** One agent address (the insert node), three
+  storage nodes: rows must arrive sharded, each exactly once. Pointed at the
+  storage nodes directly, the same code replicates every block to all of them.
+- **What a checkpoint buys.** Restart a tailer: with its checkpoint, 0
+  duplicates; without it, the whole file again. Report both.
+- **The ack is not the end of the road.** The agent acks when the *insert node*
+  buffers the rows; there is still a `FlushInterval` of memory between there and
+  a storage node. Name the window, and say which component owns it.
+
+---
+
 ## Deliberately out of scope
 
 Same spirit as the README's list, and for the same reason -- each of these

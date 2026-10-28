@@ -157,6 +157,7 @@ func (s *Storage) MustAddRows(rows []Row) {
 		shard := s.shardForStreamID(rows[i].StreamID)
 		day := dayForTimestamp(rows[i].Timestamp)
 
+		s.shards[shard].mu.Lock()
 		_, exist := s.shards[shard].partitions[day]
 		if !exist {
 			partPath := filepath.Join(s.path, fmt.Sprintf("shard-%04d", shard), strconv.Itoa(int(day)))
@@ -164,6 +165,7 @@ func (s *Storage) MustAddRows(rows []Row) {
 			s.shards[shard].partitions[day] = mustOpenPartition(partPath, day)
 		}
 		s.shards[shard].partitions[day].mustAddRows(rows[i:j])
+		s.shards[shard].mu.Unlock()
 		i = j
 	}
 }

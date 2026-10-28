@@ -182,7 +182,7 @@ func NewAgent(cfg *Config) *Agent {
 	for i, addr := range cfg.Addrs {
 		d := &destination{
 			addr:     addr,
-			client:   &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second},
+			client:   &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 30 * time.Second},
 			q:        mustOpenQueue(filepath.Join(cfg.DataPath, addr), cfg.MaxPendingBytes),
 			retryMin: cmp.Or(cfg.RetryMinInterval, DefaultRetryMinInterval),
 			retryMax: cmp.Or(cfg.RetryMaxInterval, DefaultRetryMaxInterval),

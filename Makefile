@@ -1,4 +1,4 @@
-.PHONY: help stage1 stage2 stage3 stage4 stage6 stage7 stage8 stage9 stage10 stage11 test race crash chaos vet clean
+.PHONY: help stage1 stage2 stage3 stage4 stage6 stage7 stage8 stage9 stage10 stage11 stage12 test race crash chaos vet clean
 
 help:
 	@echo "minilog -- a 1500-line VictoriaLogs, built by you"
@@ -15,6 +15,7 @@ help:
 	@echo "  make stage9   reroute on node loss, partial-response marking"
 	@echo "  make stage10  limit pushdown: wire bytes and peak RSS vs N"
 	@echo "  make stage11  agent: durable queue, outage, restart, duplicates"
+	@echo "  make stage12  agent inputs: JSON receiver, file tailer, end to end"
 	@echo ""
 	@echo "  make test     all stages"
 	@echo "  make race     all stages under the race detector"
@@ -52,6 +53,9 @@ stage10:
 
 stage11:
 	go test ./harness -run '^TestStage11' -v -timeout 30m
+
+stage12:
+	go test ./agent ./harness -run '^TestStage12' -v -timeout 30m
 
 test:
 	go test ./harness -v -timeout 60m
