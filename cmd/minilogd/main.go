@@ -41,6 +41,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"io"
@@ -48,10 +49,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/niladrix719/minilog/agent"
 	"github.com/niladrix719/minilog/internalapi"
 	"github.com/niladrix719/minilog/minilog"
 	"github.com/niladrix719/minilog/netstorage"
@@ -104,7 +107,39 @@ func main() {
 // Note what is absent: no "wait until drained" on shutdown. The backlog stays on
 // disk and is sent after the next start. That is what vlagent does too.
 func runAgent(destinations []string, tmpDataPath, tailPaths, listenAddr string) {
-	panic("TODO stage 12: implement runAgent")
+	if tmpDataPath == "" {
+		log.Fatal("empty data path!")
+		return
+	}
+	ag := agent.NewAgent(&agent.Config{
+		Addrs:    destinations,
+		DataPath: tmpDataPath,
+	})
+	srv := &http.Server{Addr: listenAddr, Handler: agent.NewReceiver(ag, nil)}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("agent http sever stopped: %v", err)
+		}
+	}()
+	var tl *agent.Tailer
+	if tailPaths != "" {
+		tl = agent.NewTailer(&agent.TailerConfig{
+			Paths:          strings.Split(tailPaths, ","),
+			CheckpointPath: filepath.Join(tmpDataPath, "checkpoints.json"),
+		}, ag)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	if tl != nil {
+		tl.MustClose()
+	}
+	ag.MustClose()
 }
 
 func runStorageNode(dataPath, listenAddr string) {
@@ -198,23 +233,13 @@ func (n *netStorageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func runInsertSelectNode(storageNodeAddrs []string, listenAddr string) {
 	s := netstorage.NewStorage(&netstorage.Config{Addrs: storageNodeAddrs})
 	handler := &netStorageHandler{s: s}
-	// STAGE 12: an agent POSTs MarshalRowBatch bodies to internalapi.InsertPath
-	// on this node, and right now only a storage node answers that, so the
-	// path agent -> insert node -> storage nodes does not exist in the binary.
-	// netStorageHandler ignores the path, so it cannot just be extended.
-	// Route by path instead:
-	//
-	//	mux := http.NewServeMux()
-	//	mux.Handle("/internal/", internalapi.NewStorageNodeHandler(s))
-	//	mux.Handle("/", handler)
-	//
-	// internalapi.NewStorageNodeHandler serves any minilog.LogStorage, and
-	// netstorage.Storage is one -- see newInsertNode in harness/stage12_test.go
-	// for the same wiring under test. Then serve mux instead of handler below.
+	mux := http.NewServeMux()
+	mux.Handle("/internal/", internalapi.NewStorageNodeHandler(s))
+	mux.Handle("/", handler)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		err := http.ListenAndServe(listenAddr, handler)
+		err := http.ListenAndServe(listenAddr, mux)
 		if err != nil {
 			log.Printf("netstorage node http server stopped %v", err)
 		}
