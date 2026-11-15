@@ -49,7 +49,7 @@ func TestSendBlock(t *testing.T) {
 	}))
 	d := &destination{
 		addr:   srv.Listener.Addr().String(),
-		client: &http.Client{Transport: &http.Transport{}},
+		client: &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second},
 	}
 	block := []byte("opaque block bytes")
 

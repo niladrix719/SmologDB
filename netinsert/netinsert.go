@@ -142,7 +142,7 @@ func NewStorage(cfg *Config) *Storage {
 	for _, addr := range cfg.Addrs {
 		n = append(n, &storageNode{
 			addr:    addr,
-			client:  &http.Client{Transport: &http.Transport{}},
+			client:  &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second},
 			pending: make([]minilog.Row, 0),
 		})
 	}
@@ -172,30 +172,11 @@ func NewStorage(cfg *Config) *Storage {
 		nodeDisableDuration: nodeDisableDuration,
 		disableCompression:  cfg.DisableCompression,
 	}
-	s.wg.Add(1)
-	go s.flushLoop()
-	return s
-}
-
-func (s *Storage) flushLoop() {
-	defer s.wg.Done()
-	tick := time.NewTicker(s.flushInterval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-tick.C:
-			for _, node := range s.nodes {
-				node.mu.Lock()
-				toSend := node.pending
-				node.pending = nil
-				node.pendingBytes = 0
-				node.mu.Unlock()
-				node.flush(s, toSend)
-			}
-		}
+	for _, node := range s.nodes {
+		s.wg.Add(1)
+		go node.flushLoop(s)
 	}
+	return s
 }
 
 // MustAddRows routes rows to nodes and buffers them for sending.
@@ -227,6 +208,7 @@ func (s *Storage) MustAddRows(rows []minilog.Row) {
 			s.nodes[nIdx].pending = nil
 			s.nodes[nIdx].pendingBytes = 0
 			s.nodes[nIdx].flush(s, toSend)
+			s.nodes[nIdx].lastFlush = time.Now()
 		}
 		s.nodes[nIdx].mu.Unlock()
 	}
@@ -346,7 +328,30 @@ func (sn *storageNode) flush(s *Storage, rows []minilog.Row) {
 			return
 		}
 	}
-	sn.lastFlush = time.Now()
+}
+
+func (sn *storageNode) flushLoop(s *Storage) {
+	defer s.wg.Done()
+	tick := time.NewTicker(s.flushInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+			sn.mu.Lock()
+			if time.Since(sn.lastFlush) < s.flushInterval {
+				sn.mu.Unlock()
+				continue
+			}
+			toSend := sn.pending
+			sn.pending = nil
+			sn.pendingBytes = 0
+			sn.lastFlush = time.Now()
+			sn.mu.Unlock()
+			sn.flush(s, toSend)
+		}
+	}
 }
 
 // sendInsertRequest ships one buffer to sn.
