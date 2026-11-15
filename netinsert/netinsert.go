@@ -163,7 +163,7 @@ func NewStorage(cfg *Config) *Storage {
 	if nodeDisableDuration == 0 {
 		nodeDisableDuration = DefaultNodeDisableDuration
 	}
-	return &Storage{
+	s := &Storage{
 		nodes:               n,
 		router:              r,
 		stop:                make(chan struct{}),
@@ -171,6 +171,30 @@ func NewStorage(cfg *Config) *Storage {
 		flushInterval:       flushInterval,
 		nodeDisableDuration: nodeDisableDuration,
 		disableCompression:  cfg.DisableCompression,
+	}
+	s.wg.Add(1)
+	go s.flushLoop()
+	return s
+}
+
+func (s *Storage) flushLoop() {
+	defer s.wg.Done()
+	tick := time.NewTicker(s.flushInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+			for _, node := range s.nodes {
+				node.mu.Lock()
+				toSend := node.pending
+				node.pending = nil
+				node.pendingBytes = 0
+				node.mu.Unlock()
+				node.flush(s, toSend)
+			}
+		}
 	}
 }
 
@@ -264,6 +288,7 @@ func (s *Storage) MustClose() {
 	close(s.stop)
 	done := make(chan struct{})
 	go func() {
+		s.wg.Wait()
 		s.MustForceFlush()
 		close(done)
 	}()
