@@ -1,8 +1,5 @@
 package agent
 
-// STAGE 12 -- COMPLETE. The tailer's pure pieces: reading lines, and the
-// checkpoint file.
-
 import (
 	"os"
 	"path/filepath"
@@ -18,7 +15,7 @@ func strs(lines [][]byte) []string {
 	return out
 }
 
-func TestStage12ReadNewLines(t *testing.T) {
+func TestReadNewLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "app.log")
 	write := func(s string) {
@@ -34,53 +31,44 @@ func TestStage12ReadNewLines(t *testing.T) {
 		return strs(lines), off
 	}
 
-	// An unfinished last line is left alone.
 	write("a\nbb\nccc")
 	lines, off := read(0)
 	if !slices.Equal(lines, []string{"a", "bb"}) || off != 5 {
-		t.Fatalf("got %v, offset %d; want [a bb], 5. The partial line 'ccc' has no newline yet\n"+
-			"and must not be consumed, or its other half arrives later as a second fragment.", lines, off)
+		t.Fatalf("got %v, offset %d; want [a bb], 5. The partial line 'ccc' has no newline yet", lines, off)
 	}
 
-	// The writer finishes it. Resume from the returned offset.
 	write("a\nbb\ncccc\nd\n")
 	lines, off = read(5)
 	if !slices.Equal(lines, []string{"cccc", "d"}) || off != 12 {
 		t.Fatalf("got %v, offset %d; want [cccc d], 12", lines, off)
 	}
 
-	// Nothing new.
 	lines, off = read(12)
 	if len(lines) != 0 || off != 12 {
 		t.Fatalf("idle read returned %v, offset %d", lines, off)
 	}
 
-	// Truncated below the offset: start over.
 	write("x\n")
 	lines, off = read(12)
 	if !slices.Equal(lines, []string{"x"}) || off != 2 {
-		t.Fatalf("after truncation got %v, offset %d; want [x], 2.\n"+
-			"A file smaller than the offset was truncated or replaced: restart from 0, or the\n"+
-			"tailer waits forever at an offset the file will never reach again.", lines, off)
+		t.Fatalf("after truncation got %v, offset %d; want [x], 2.", lines, off)
 	}
 
-	// CRLF and blank lines.
 	write("a\r\n\n\nb\n")
 	lines, off = read(0)
 	if !slices.Equal(lines, []string{"a", "b"}) || off != 7 {
 		t.Fatalf("got %v, offset %d; want [a b], 7 (CR stripped, blanks skipped but consumed)", lines, off)
 	}
 
-	// A file that does not exist yet.
 	missing, moff, err := readNewLines(filepath.Join(dir, "later.log"), 7)
 	if err != nil || len(missing) != 0 || moff != 7 {
 		t.Fatalf("missing file: %v, %d, %v; want no lines, offset unchanged, no error", strs(missing), moff, err)
 	}
 }
 
-func TestStage12ReadNewLinesBounded(t *testing.T) {
+func TestReadNewLinesBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "big.log")
-	line := "0123456789abcdef\n" // 17 bytes
+	line := "0123456789abcdef\n"
 	n := (maxReadPerPoll/len(line))*2 + 10
 	buf := make([]byte, 0, n*len(line))
 	for i := 0; i < n; i++ {
@@ -108,7 +96,7 @@ func TestStage12ReadNewLinesBounded(t *testing.T) {
 	}
 }
 
-func TestStage12MustWriteFileAtomic(t *testing.T) {
+func TestWriteFileAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f.json")
 	mustWriteFileAtomic(path, []byte("one"))
@@ -122,11 +110,10 @@ func TestStage12MustWriteFileAtomic(t *testing.T) {
 	}
 }
 
-func TestStage12Checkpoints(t *testing.T) {
+func TestCheckpoints(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cp.json")
 
-	// Missing: empty, non-nil, assignable.
 	cps := loadCheckpoints(path)
 	if cps == nil || len(cps) != 0 {
 		t.Fatalf("missing file: got %v, want an empty non-nil map", cps)
@@ -139,13 +126,11 @@ func TestStage12Checkpoints(t *testing.T) {
 		t.Fatalf("round trip gave %v", got)
 	}
 
-	// Overwrite, not append.
 	mustSaveCheckpoints(path, map[string]int64{"/var/log/a.log": 99})
 	if got := loadCheckpoints(path); len(got) != 1 || got["/var/log/a.log"] != 99 {
 		t.Fatalf("second save gave %v", got)
 	}
 
-	// Corrupt: logged, empty, no panic.
 	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}

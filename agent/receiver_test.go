@@ -1,7 +1,5 @@
 package agent
 
-// STAGE 12 -- COMPLETE. Parsing rules and handler behaviour, no cluster needed.
-
 import (
 	"net/http"
 	"net/http/httptest"
@@ -11,29 +9,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/niladrix719/minilog/minilog"
+	"github.com/niladrix719/smologdb/storage"
 )
 
-// recSink records what the receiver hands it.
 type recSink struct {
 	mu    sync.Mutex
 	calls int
-	rows  []minilog.Row
+	rows  []storage.Row
 }
 
-func (s *recSink) MustAddRows(rows []minilog.Row) {
+func (s *recSink) MustAddRows(rows []storage.Row) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
 	s.rows = append(s.rows, rows...)
 }
 
-func fieldOf(r minilog.Row, name string) string {
+func fieldOf(r storage.Row, name string) string {
 	v, _ := r.GetField(name)
 	return v
 }
 
-func names(r minilog.Row) []string {
+func names(r storage.Row) []string {
 	out := make([]string, len(r.Fields))
 	for i, f := range r.Fields {
 		out[i] = f.Name
@@ -41,7 +38,7 @@ func names(r minilog.Row) []string {
 	return out
 }
 
-func TestStage12ParseJSONLine(t *testing.T) {
+func TestParseJSONLine(t *testing.T) {
 	const now = int64(42)
 	may1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC).UnixNano()
 
@@ -57,20 +54,19 @@ func TestStage12ParseJSONLine(t *testing.T) {
 		if want := []string{"_msg", "app", "level"}; !slices.Equal(names(row), want) {
 			t.Fatalf("fields %v, want %v: sorted by name, and _time removed once consumed", names(row), want)
 		}
-		if want := minilog.StreamIDForLabels([]minilog.Field{{Name: "app", Value: "web"}}); row.StreamID != want {
+		if want := storage.StreamIDForLabels([]storage.Field{{Name: "app", Value: "web"}}); row.StreamID != want {
 			t.Fatalf("StreamID %d, want the id of {app=web} = %d", row.StreamID, want)
 		}
 	})
 
 	t.Run("nanosecond timestamp survives as a JSON number", func(t *testing.T) {
-		// Above 2^53, so a float64 round trip would change the low digits.
+
 		row, err := ParseJSONLine([]byte(`{"_time":1714557600123456789,"_msg":"x"}`), &ParseParams{}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if row.Timestamp != 1714557600123456789 {
-			t.Fatalf("timestamp %d, want 1714557600123456789.\n"+
-				"The number went through float64. Use json.Decoder.UseNumber().", row.Timestamp)
+			t.Fatalf("timestamp %d, want 1714557600123456789.", row.Timestamp)
 		}
 	})
 
@@ -80,7 +76,7 @@ func TestStage12ParseJSONLine(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := []minilog.Field{{Name: "a.b.c", Value: "1"}, {Name: "d", Value: "[1,2]"}, {Name: "e", Value: "true"}}
+		want := []storage.Field{{Name: "a.b.c", Value: "1"}, {Name: "d", Value: "[1,2]"}, {Name: "e", Value: "true"}}
 		if !slices.Equal(row.Fields, want) {
 			t.Fatalf("fields %v, want %v (null and empty are dropped)", row.Fields, want)
 		}
@@ -100,7 +96,7 @@ func TestStage12ParseJSONLine(t *testing.T) {
 	})
 
 	t.Run("no stream fields, or absent ones, means one stream", func(t *testing.T) {
-		none := minilog.StreamIDForLabels(nil)
+		none := storage.StreamIDForLabels(nil)
 		a, _ := ParseJSONLine([]byte(`{"_msg":"x"}`), &ParseParams{}, now)
 		b, _ := ParseJSONLine([]byte(`{"_msg":"x"}`), &ParseParams{StreamFields: []string{"app"}}, now)
 		if a.StreamID != none || b.StreamID != none {
@@ -129,7 +125,7 @@ func TestStage12ParseJSONLine(t *testing.T) {
 	})
 }
 
-func TestStage12ParseTimestamp(t *testing.T) {
+func TestParseTimestamp(t *testing.T) {
 	const now = int64(777)
 	for _, c := range []struct {
 		in   string
@@ -164,8 +160,8 @@ func post(h http.Handler, target, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestStage12ReceiverHandler(t *testing.T) {
-	const path = "/insert/jsonline"
+func TestReceiverHandler(t *testing.T) {
+	const path = "/ingest"
 
 	t.Run("good body is one batch, blank lines skipped", func(t *testing.T) {
 		s := &recSink{}
@@ -211,7 +207,7 @@ func TestStage12ReceiverHandler(t *testing.T) {
 	t.Run("query args override the defaults", func(t *testing.T) {
 		s := &recSink{}
 		rec := post(NewReceiver(s, nil),
-			path+"?_stream_fields=app&_msg_field=message&_time_field=ts",
+			path+"?stream=app&msg_field=message&time_field=ts",
 			`{"message":"m","app":"a","ts":"2024-05-01T10:00:00Z"}`)
 		if rec.Code != http.StatusOK || len(s.rows) != 1 {
 			t.Fatalf("status %d rows %d: %s", rec.Code, len(s.rows), rec.Body)
@@ -223,7 +219,7 @@ func TestStage12ReceiverHandler(t *testing.T) {
 		if r.Timestamp != time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC).UnixNano() {
 			t.Fatalf("timestamp %d not taken from ts", r.Timestamp)
 		}
-		if want := minilog.StreamIDForLabels([]minilog.Field{{Name: "app", Value: "a"}}); r.StreamID != want {
+		if want := storage.StreamIDForLabels([]storage.Field{{Name: "app", Value: "a"}}); r.StreamID != want {
 			t.Fatalf("StreamID %d, want %d", r.StreamID, want)
 		}
 	})
@@ -233,8 +229,7 @@ func TestStage12ReceiverHandler(t *testing.T) {
 		long := strings.Repeat("x", 200_000)
 		rec := post(NewReceiver(s, nil), path, `{"_msg":"`+long+`"}`+"\n"+`{"_msg":"after"}`)
 		if rec.Code != http.StatusOK || len(s.rows) != 2 || len(fieldOf(s.rows[0], "_msg")) != 200_000 {
-			t.Fatalf("status %d, %d rows. bufio.Scanner stops at 64KB unless you give it a bigger buffer,\n"+
-				"and it stops SILENTLY unless you check Err().", rec.Code, len(s.rows))
+			t.Fatalf("status %d, %d rows. want 200 and every row for a line over 64KB", rec.Code, len(s.rows))
 		}
 	})
 

@@ -1,29 +1,4 @@
-// Command crashtest kills an ingesting process at random moments and checks
-// that the storage recovers with no corruption and no loss of acknowledged
-// data.
-//
-// Usage:
-//
-//	go run ./cmd/crashtest                 # 200 iterations
-//	go run ./cmd/crashtest -iters 1000     # be mean about it
-//
-// How it works:
-//
-//	parent: spawns a child that ingests into a shared directory, waits a
-//	        random interval, then SIGKILLs it. SIGKILL, not SIGTERM: no
-//	        cleanup handlers run, no deferred Close, no flush. This is the
-//	        moral equivalent of the process being OOM-killed mid-write.
-//	child:  ingests rows in batches. After each MustForceFlush returns it
-//	        appends the durable row count to acked.log and fsyncs it. That
-//	        file is the contract: those rows were acknowledged as durable.
-//	parent: reopens the storage and asserts
-//	          (a) MustOpenStorage does not panic
-//	          (b) a full scan returns at least the last acknowledged count
-//	          (c) every returned row is well-formed and unique
-//
-// (b) is the durability property. (a) is the crash-recovery property: any
-// half-written part directory or unreferenced part left behind by the kill
-// must be cleaned up by mustOpenPartition, not tripped over.
+// Command crashtest kills a writing storage process at random points and checks that it recovers.
 package main
 
 import (
@@ -40,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/niladrix719/minilog/gen"
-	"github.com/niladrix719/minilog/minilog"
+	"github.com/niladrix719/smologdb/gen"
+	"github.com/niladrix719/smologdb/storage"
 )
 
 var (
@@ -63,10 +38,6 @@ func main() {
 	runParent()
 }
 
-// ---------------------------------------------------------------------------
-// child
-// ---------------------------------------------------------------------------
-
 func runChild() {
 	if *dir == "" {
 		fatal("child: -dir is required")
@@ -76,7 +47,7 @@ func runChild() {
 	cfg.Seed = *seed
 	ds := gen.Generate(cfg)
 
-	s := minilog.MustOpenStorage(*dir, &minilog.Config{ShardsCount: 2})
+	s := storage.MustOpenStorage(*dir, &storage.Config{ShardsCount: 2})
 
 	ackPath := filepath.Join(*dir, "acked.log")
 	ackFile, err := os.OpenFile(ackPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -94,7 +65,6 @@ func runChild() {
 		s.MustAddRows(ds.Rows[off:end])
 		s.MustForceFlush()
 
-		// Only now are these rows durable. Record it, durably.
 		acked = end
 		if _, err := fmt.Fprintf(ackFile, "%d\n", acked); err != nil {
 			fatal("child: write acked.log: %v", err)
@@ -109,17 +79,13 @@ func runChild() {
 	os.Exit(0)
 }
 
-// ---------------------------------------------------------------------------
-// parent
-// ---------------------------------------------------------------------------
-
 func runParent() {
 	exe, err := os.Executable()
 	if err != nil {
 		fatal("cannot find own executable: %v", err)
 	}
 
-	root, err := os.MkdirTemp("", "minilog-crashtest-")
+	root, err := os.MkdirTemp("", "smologdb-crashtest-")
 	if err != nil {
 		fatal("mkdtemp: %v", err)
 	}
@@ -161,7 +127,7 @@ func runParent() {
 		case <-done:
 			completed++
 		case <-time.After(delay):
-			// SIGKILL: no handlers, no flush, no mercy.
+
 			_ = cmd.Process.Signal(syscall.SIGKILL)
 			<-done
 			killed++
@@ -187,16 +153,8 @@ func runParent() {
 	fmt.Printf("  ran to completion: %d\n", completed)
 	fmt.Printf("  recovered:         %d\n", recovered)
 	fmt.Printf("\nEvery acknowledged row survived every kill.\n")
-	fmt.Printf("That is the durability property. Note what it does NOT cover:\n")
-	fmt.Printf("  - power loss (fsync does not flush the drive cache on macOS;\n")
-	fmt.Printf("    F_FULLFSYNC does). SIGKILL only tests process death.\n")
-	fmt.Printf("  - torn writes at the sector level.\n")
-	fmt.Printf("  - unacknowledged rows, which are correctly allowed to vanish --\n")
-	fmt.Printf("    a write-ahead log is what would save those, and this exercise\n")
-	fmt.Printf("    deliberately has none.\n")
 }
 
-// verify reopens the storage and checks the recovery invariants.
 func verify(iter int, storeDir string, acked int, dsSeed int64) (int, float64) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -209,10 +167,10 @@ func verify(iter int, storeDir string, acked int, dsSeed int64) (int, float64) {
 		}
 	}()
 
-	s := minilog.MustOpenStorage(storeDir, &minilog.Config{ShardsCount: 2})
+	s := storage.MustOpenStorage(storeDir, &storage.Config{ShardsCount: 2})
 	defer s.MustClose()
 
-	got, _ := s.Search(&minilog.Query{
+	got, _ := s.Search(&storage.Query{
 		MinTimestamp: math.MinInt64,
 		MaxTimestamp: math.MaxInt64,
 	})
@@ -228,8 +186,6 @@ func verify(iter int, storeDir string, acked int, dsSeed int64) (int, float64) {
 			iter, acked, len(got), storeDir)
 	}
 
-	// No duplicates: a merge that published before removing its sources, then
-	// crashed, must not leave both live.
 	seen := make(map[string]struct{}, len(got))
 	for i := range got {
 		key := fmt.Sprintf("%d|%d|%s", got[i].StreamID, got[i].Timestamp, fieldsKey(got[i].Fields))
@@ -254,7 +210,7 @@ func verify(iter int, storeDir string, acked int, dsSeed int64) (int, float64) {
 	return len(got), lossPct
 }
 
-func fieldsKey(fields []minilog.Field) string {
+func fieldsKey(fields []storage.Field) string {
 	var sb strings.Builder
 	for _, f := range fields {
 		sb.WriteString(f.Name)
@@ -268,7 +224,7 @@ func fieldsKey(fields []minilog.Field) string {
 func readAcked(path string) int {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0 // killed before the first flush completed
+		return 0
 	}
 	defer f.Close()
 
@@ -281,8 +237,7 @@ func readAcked(path string) int {
 		}
 		n, err := strconv.Atoi(line)
 		if err != nil {
-			// A torn final line is expected -- the process was killed
-			// mid-write. Ignore it and keep the last complete one.
+
 			continue
 		}
 		last = n

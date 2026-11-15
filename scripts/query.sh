@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Queries the insert/select node and prints rows as readable lines, newest last.
+# Queries the router and prints rows as readable lines, newest last.
 #
 #   ./scripts/query.sh                 # every row
 #   ./scripts/query.sh ERROR           # rows whose _msg contains the WORD ERROR

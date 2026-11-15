@@ -1,71 +1,35 @@
-// Package gen produces deterministic synthetic log data shaped like real
-// Kubernetes application logs.
-//
-// The harness measurements depend on its exact distributions (cardinalities,
-// rare-token injection rate), so changing it changes what the numbers mean.
+// Package gen generates deterministic synthetic logs for tests.
 package gen
 
 import (
 	"fmt"
 	"math/rand"
 
-	"github.com/niladrix719/minilog/minilog"
+	"github.com/niladrix719/smologdb/storage"
 )
 
-// Config controls dataset generation.
 type Config struct {
-	// Rows is the total number of log entries to generate.
 	Rows int
 
-	// Streams is the number of distinct log streams.
-	//
-	// This is the cardinality knob and it is the most important one in the
-	// whole exercise. Try 100, then 10_000, then 1_000_000 with the same row
-	// count and watch what happens to part count, index size, and query
-	// latency. High stream cardinality is the #1 production failure mode of
-	// VictoriaLogs and this is where you get to feel it.
 	Streams int
 
-	// StartTime is the unix-nanosecond timestamp of the first row.
 	StartTime int64
 
-	// SpanNanos is the time range the rows are spread across.
 	SpanNanos int64
 
-	// Seed makes generation deterministic. Same seed, same bytes.
 	Seed int64
 
-	// RareTokenInjections is the EXACT number of rows that will contain
-	// RareToken. Defaults to max(Rows/20000, 20).
-	//
-	// This is an exact count rather than a probability on purpose: at a
-	// realistic rarity, a probabilistic rate lands on zero often enough to
-	// make the stage 2 skip measurement randomly degenerate. The harness needs
-	// a guaranteed non-zero ground truth to compare against.
-	//
-	// Keep it small relative to the block count. The stage 2 harness asserts
-	// you skip >95% of blocks, which requires the matching rows to be
-	// concentrated in a handful of blocks.
 	RareTokenInjections int
 }
 
-// Tokens the harnesses query for. They are injected at known rates so the
-// measurements have a ground truth to compare against.
 const (
-	// RareToken appears in exactly Config.RareTokenInjections rows.
-	// A query for it should skip nearly every block.
 	RareToken = "zqxjkvbwpf"
 
-	// CommonToken appears in every row. Should skip ~no blocks.
 	CommonToken = "request"
 
-	// AbsentTokenPrefix is used to build tokens guaranteed not to exist
-	// anywhere in the dataset. The false-positive harness queries thousands
-	// of these; every "maybe" answer is by definition a false positive.
 	AbsentTokenPrefix = "nonexistent"
 )
 
-// DefaultConfig returns a small, fast dataset suitable for iterating.
 func DefaultConfig() *Config {
 	return &Config{
 		Rows:      200_000,
@@ -76,7 +40,6 @@ func DefaultConfig() *Config {
 	}
 }
 
-// defaultRareInjections is the fallback when Config.RareTokenInjections is 0.
 func defaultRareInjections(rows int) int {
 	n := rows / 20000
 	if n < 20 {
@@ -90,7 +53,7 @@ func defaultRareInjections(rows int) int {
 
 var (
 	levels   = []string{"debug", "info", "warn", "error"}
-	levelsW  = []int{50, 400, 40, 10} // weights; info dominates, as in real logs
+	levelsW  = []int{50, 400, 40, 10}
 	services = []string{
 		"api-gateway", "auth-service", "billing", "cart", "checkout",
 		"inventory", "notifications", "payments", "search", "shipping",
@@ -105,28 +68,22 @@ var (
 	regions = []string{"us-east-1", "us-west-2", "eu-central-1", "ap-south-1"}
 )
 
-// Stream is one log stream's identifying labels.
 type Stream struct {
 	ID     uint64
-	Labels []minilog.Field
+	Labels []storage.Field
 }
 
-// Dataset is a generated corpus plus the ground truth about it.
 type Dataset struct {
-	Rows    []minilog.Row
+	Rows    []storage.Row
 	Streams []Stream
 
-	// RareTokenRows is the exact number of rows containing gen.RareToken.
-	// The stage 2 harness asserts the query returns exactly this many.
 	RareTokenRows int
 
-	// LogicalBytes is the sum of Row.LogicalSizeBytes().
 	LogicalBytes int64
 
 	cfg *Config
 }
 
-// Generate builds a dataset. Deterministic for a given Config.
 func Generate(cfg *Config) *Dataset {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -137,7 +94,6 @@ func Generate(cfg *Config) *Dataset {
 	}
 	rng := rand.New(rand.NewSource(cfg.Seed))
 
-	// Pick the exact set of row indices that will carry RareToken.
 	rareIdx := make(map[int]struct{}, nRare)
 	for len(rareIdx) < nRare && len(rareIdx) < cfg.Rows {
 		rareIdx[rng.Intn(cfg.Rows)] = struct{}{}
@@ -145,17 +101,17 @@ func Generate(cfg *Config) *Dataset {
 
 	streams := make([]Stream, cfg.Streams)
 	for i := range streams {
-		labels := []minilog.Field{
+		labels := []storage.Field{
 			{Name: "service", Value: services[i%len(services)]},
 			{Name: "pod", Value: fmt.Sprintf("%s-%d-%04x", services[i%len(services)], i/len(services), rng.Intn(1<<16))},
 			{Name: "namespace", Value: []string{"prod", "staging"}[i%2]},
 			{Name: "region", Value: regions[i%len(regions)]},
 		}
-		streams[i] = Stream{ID: minilog.StreamIDForLabels(labels), Labels: labels}
+		streams[i] = Stream{ID: storage.StreamIDForLabels(labels), Labels: labels}
 	}
 
 	ds := &Dataset{
-		Rows:    make([]minilog.Row, 0, cfg.Rows),
+		Rows:    make([]storage.Row, 0, cfg.Rows),
 		Streams: streams,
 		cfg:     cfg,
 	}
@@ -179,9 +135,7 @@ func Generate(cfg *Config) *Dataset {
 			ds.RareTokenRows++
 		}
 
-		// Fields must be sorted by Name -- it is a precondition of the block
-		// writer, and the round-trip harness compares field slices directly.
-		fields := []minilog.Field{
+		fields := []storage.Field{
 			{Name: "_msg", Value: msg},
 			{Name: "duration_ms", Value: fmt.Sprintf("%d", durMs)},
 			{Name: "level", Value: level},
@@ -195,17 +149,13 @@ func Generate(cfg *Config) *Dataset {
 			{Name: "trace_id", Value: traceID},
 		}
 
-		r := minilog.Row{Timestamp: ts, StreamID: st.ID, Fields: fields}
+		r := storage.Row{Timestamp: ts, StreamID: st.ID, Fields: fields}
 		ds.LogicalBytes += int64(r.LogicalSizeBytes())
 		ds.Rows = append(ds.Rows, r)
 	}
 	return ds
 }
 
-// AbsentTokens returns n tokens guaranteed not to appear in any dataset.
-//
-// Used by the false-positive harness: every block whose bloom filter says
-// "maybe" for one of these is, by construction, a false positive.
 func AbsentTokens(n int, seed int64) []string {
 	rng := rand.New(rand.NewSource(seed))
 	out := make([]string, n)

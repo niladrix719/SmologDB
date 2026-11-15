@@ -1,9 +1,5 @@
 package agent
 
-// Unit tests for queue.go. Chunk size is shrunk to 100 bytes (max block 30) so
-// every boundary case -- padding skip, exact tiling, drop across chunks -- is
-// hit constantly. Seed counts are low because every write fsyncs.
-
 import (
 	"bytes"
 	"math/rand"
@@ -12,7 +8,6 @@ import (
 	"testing"
 )
 
-// smallQueue returns a fresh queue with tiny chunks so boundaries are hit constantly.
 func smallQueue(t *testing.T, dir string, bound int64) *queue {
 	q := mustOpenQueue(dir, bound)
 	q.chunkFileSize = 100
@@ -51,7 +46,6 @@ func drain(t *testing.T, q *queue) [][]byte {
 	}
 }
 
-// the exact-tiling case from the dry run: A=30B, B=32B, C=38B ends at 100, then D.
 func TestQueueExactTiling(t *testing.T) {
 	dir := t.TempDir()
 	q := smallQueue(t, dir, 0)
@@ -71,7 +65,6 @@ func TestQueueExactTiling(t *testing.T) {
 	t.Logf("chunks left: %v", chunkFiles(t, dir))
 }
 
-// randomized interleaved write/peek/ack with a model, no bound.
 func TestQueueRandomNoBound(t *testing.T) {
 	for seed := int64(0); seed < 12; seed++ {
 		rng := rand.New(rand.NewSource(seed))
@@ -118,8 +111,6 @@ func TestQueueRandomNoBound(t *testing.T) {
 	}
 }
 
-// bounded queue: survivors must be a suffix of what was written, in order,
-// and written == dropped + delivered.
 func TestQueueRandomBound(t *testing.T) {
 	for seed := int64(0); seed < 12; seed++ {
 		rng := rand.New(rand.NewSource(seed))
@@ -148,7 +139,6 @@ func TestQueueRandomBound(t *testing.T) {
 	}
 }
 
-// peek, then drops happen underneath, then ack must be a no-op.
 func TestQueueAckAfterDrop(t *testing.T) {
 	dir := t.TempDir()
 	q := smallQueue(t, dir, 120)
@@ -159,7 +149,7 @@ func TestQueueAckAfterDrop(t *testing.T) {
 	for i := 2; i < 12; i++ {
 		q.MustWriteBlock(blk(i, 20))
 	}
-	q.MustAck() // peeked block was dropped long ago
+	q.MustAck()
 	rest := drain(t, q)
 	for i := 1; i < len(rest); i++ {
 		if rest[i][0] != rest[i-1][0]+1 {
@@ -171,7 +161,6 @@ func TestQueueAckAfterDrop(t *testing.T) {
 	}
 }
 
-// restart with default sizes, backlog on disk.
 func TestQueueRestart(t *testing.T) {
 	dir := t.TempDir()
 	q := mustOpenQueue(dir, 0)
@@ -191,7 +180,6 @@ func TestQueueRestart(t *testing.T) {
 	}
 }
 
-// torn tail: junk appended, plus a block written but metainfo lost.
 func TestQueueTornWrite(t *testing.T) {
 	dir := t.TempDir()
 	q := mustOpenQueue(dir, 0)
@@ -200,14 +188,13 @@ func TestQueueTornWrite(t *testing.T) {
 	}
 	q.MustClose()
 
-	// roll metainfo back to 6 blocks: 4 complete blocks exist beyond WriterOffset.
 	mi := readMetainfo(dir)
 	mi.WriterOffset = 6 * 508
 	q2 := &queue{dir: dir, readerOffset: mi.ReaderOffset, writerOffset: mi.WriterOffset}
 	q2.mustWriteMetainfo()
 
 	f, _ := os.OpenFile(filepath.Join(dir, "0000000000000000"), os.O_APPEND|os.O_WRONLY, 0)
-	f.Write([]byte{0, 0, 0x10, 0, 0, 0, 0, 0, 'x', 'x', 'x', 'x', 'x'}) // header says 1MB, 5 bytes follow
+	f.Write([]byte{0, 0, 0x10, 0, 0, 0, 0, 0, 'x', 'x', 'x', 'x', 'x'})
 	f.Close()
 
 	q3 := mustOpenQueue(dir, 0)
@@ -215,7 +202,7 @@ func TestQueueTornWrite(t *testing.T) {
 	if len(got) != 10 {
 		t.Fatalf("recovered %d blocks, want 10 (4 adopted past stale metainfo, torn tail dropped)", len(got))
 	}
-	// and the file must actually be truncated, so new writes land cleanly
+
 	q3.MustWriteBlock(blk(99, 10))
 	g, ok := q3.MustPeekBlock(nil)
 	if !ok || g[0] != 99 {
@@ -223,14 +210,11 @@ func TestQueueTornWrite(t *testing.T) {
 	}
 }
 
-// A block bigger than the whole disk budget must be dropped ON ITS OWN. The
-// old behaviour drained every pending block to make room, found it still did
-// not fit, and wrote it anyway: backlog gone, bound broken.
 func TestQueueOversizedBlockKeepsBacklog(t *testing.T) {
-	q := smallQueue(t, t.TempDir(), 36) // room for exactly two 18-byte blocks
+	q := smallQueue(t, t.TempDir(), 36)
 	q.MustWriteBlock(blk(1, 10))
 	q.MustWriteBlock(blk(2, 10))
-	q.MustWriteBlock(blk(3, 30)) // 38 bytes on disk > 36
+	q.MustWriteBlock(blk(3, 30))
 	if st := q.Stats(); st.BlocksDropped != 1 {
 		t.Fatalf("BlocksDropped=%d, want 1 (the oversized block itself)", st.BlocksDropped)
 	}
@@ -240,11 +224,9 @@ func TestQueueOversizedBlockKeepsBacklog(t *testing.T) {
 	}
 }
 
-// A crash between persisting metainfo and os.Remove leaves a chunk behind the
-// reader. Reopening must sweep it, or it leaks forever.
 func TestQueueSweepsOrphanChunks(t *testing.T) {
 	dir := t.TempDir()
-	off := int64(2 * DefaultChunkFileSize) // reader and writer both in chunk 0x8000000
+	off := int64(2 * DefaultChunkFileSize)
 	(&queue{dir: dir, readerOffset: off, writerOffset: off}).mustWriteMetainfo()
 	os.WriteFile(filepath.Join(dir, "0000000000000000"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "0000000004000000"), []byte("x"), 0o644)

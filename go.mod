@@ -1,4 +1,4 @@
-module github.com/niladrix719/minilog
+module github.com/niladrix719/smologdb
 
 go 1.26.5
 

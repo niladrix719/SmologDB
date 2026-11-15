@@ -1,8 +1,8 @@
 # SmologDB
 
-A small log database I built to understand how time series databases works on the inside. It stores logs in compressed columns with a bloom filter per block, merges parts in the background like an LSM tree, splits data across storage nodes, and ships with an agent that tails files or accepts JSON over HTTP and keeps a disk queue so nothing is lost while the cluster is down.
+A small log database I built to understand how time series databases work on the inside. It stores logs in compressed columns with a bloom filter per block, merges parts as they pile up like an LSM tree, splits data across storage nodes, and ships with an agent that tails files or accepts JSON over HTTP and keeps a disk queue so nothing is lost while the cluster is down.
 
-It is about 7,600 lines of Go and 5,500 lines of tests. The only dependency is `xxhash`. The code and the binary are called `minilog`, which was the working name.
+About 4,700 lines of Go plus 3,200 lines of tests. The only dependency is `xxhash`.
 
 ## Try it
 
@@ -10,7 +10,7 @@ It is about 7,600 lines of Go and 5,500 lines of tests. The only dependency is `
 make demo
 ```
 
-That builds `minilogd`, starts two storage nodes, an insert/select node and an agent on localhost, writes ten fake log lines a second into a file the agent is tailing, pushes a few JSON lines over HTTP, and then queries everything back:
+That builds `smologdb`, starts two storage nodes, a router and an agent on localhost, writes ten fake log lines a second into a file the agent is tailing, pushes a few JSON lines over HTTP, and then queries everything back:
 
 ```
 == five ERROR lines from the tailed file
@@ -26,35 +26,32 @@ It keeps running until you hit Ctrl+C, so you can query it from another terminal
 
 ```
  app.log ──tail──┐
-                 ├──> agent :9429 ──> insert/select :9000 ──┬──> storage :9001
- curl ──HTTP─────┘    (disk queue)    (routes by stream)    └──> storage :9002
-                                            ▲
-                       query ───────────────┘  (fans out, merges)
+                 ├──> agent :9429 ──> router :9000 ──┬──> storage :9001
+ curl ──HTTP─────┘    (disk queue)    (by stream)    └──> storage :9002
+                                         ▲
+                    query ───────────────┘  (fans out, merges)
 ```
 
-**Storage node** (`minilog/`). Rows are grouped by stream, sorted by time, and written as immutable *parts*: one file per column, delta-encoded timestamps, and a bloom filter over the tokens in each block. A query checks the block's time range and its bloom filter before it decompresses anything, so a search for a rare word skips most of the data. New rows sit in memory and get written to a part every second, or sooner if 64k rows pile up. Once a partition has eight parts they are merged into one. Data is split into one partition per day, so dropping old data is deleting a directory.
+**Storage node** (`storage/`). Rows are grouped by stream, sorted by time, and written as immutable *parts*: one file per column, delta-encoded timestamps, and a bloom filter over the tokens in each block. A query checks a block's time range and its bloom filter before it decompresses anything, so a search for a rare word skips most of the data. New rows sit in memory and get written to a part every second, or sooner if 64k rows pile up. Once a partition has eight parts they are merged into one. Data is split into one partition per day, so dropping old data is deleting a directory.
 
-**Insert/select node** (`netinsert/`, `netselect/`). Stateless. Inserts are routed to a storage node by stream ID and batched per node (flushed at 2 MB or every second). Queries go to every storage node in parallel and the sorted results are merged, with `Limit` pushed down so each node only sends what could make the final cut. If a node is down, inserts are rerouted to the others and queries can return a partial result that is marked as partial.
+**Router** (`netinsert/`, `netselect/`). Stateless. Inserts go to a storage node picked by stream and are batched per node (sent at 2 MB or every second). Queries go to every storage node in parallel and the sorted results are merged, with the limit pushed down so each node only sends what could make the final cut. If a node is down, inserts are rerouted to the others and queries can return a partial result that is marked as partial.
 
-**Agent** (`agent/`). Takes rows from two places: files it tails (`-tail`) and newline-delimited JSON posted to `/insert/jsonline`. It batches them into blocks and writes each block to an on-disk queue per destination before sending, so a dead insert node just means the queue grows. It retries with backoff until the block is accepted, and only gives up on a block the server rejects as malformed. Give it two destinations and every block goes to both. The tailer saves how far it has read in each file, but only after the rows are on disk in the queue, so a crash can cause duplicates but never gaps.
+**Agent** (`agent/`). Takes rows from two places: files it tails and newline-delimited JSON posted to `/ingest`. It batches them into blocks and writes each block to an on-disk queue per destination before sending, so a dead router just means the queue grows. It retries with backoff until the block is accepted, and only gives up on a block the server rejects as malformed. Give it two destinations and every block goes to both. The tailer saves how far it has read in each file, but only after the rows are on disk in the queue, so a crash can cause duplicates but never gaps.
 
 ## Running it yourself
 
 ```sh
-go build -o minilogd ./cmd/minilogd
+make build
 
-./minilogd -storageDataPath=./data-1 -httpListenAddr=127.0.0.1:9001
-./minilogd -storageDataPath=./data-2 -httpListenAddr=127.0.0.1:9002
-./minilogd -storageNode=127.0.0.1:9001,127.0.0.1:9002 -httpListenAddr=127.0.0.1:9000
-./minilogd -remoteWrite.addrs=127.0.0.1:9000 -tmpDataPath=./agent-data \
-           -httpListenAddr=127.0.0.1:9429 -tail=/tmp/app.log
+./smologdb storage -data ./data-1 -listen 127.0.0.1:9001
+./smologdb storage -data ./data-2 -listen 127.0.0.1:9002
+./smologdb router  -nodes 127.0.0.1:9001,127.0.0.1:9002 -listen 127.0.0.1:9000
+./smologdb agent   -send-to 127.0.0.1:9000 -dir ./agent-data -listen 127.0.0.1:9429 -tail /tmp/app.log
 ```
-
-Which role a process plays depends on its flags: `-storageDataPath` makes a storage node, `-storageNode` makes an insert/select node, `-remoteWrite.addrs` makes an agent.
 
 ### Sending logs
 
-Tail a file (lines become `_msg`, the file path becomes the stream):
+Tail a file. Each line becomes `_msg`, and the file path becomes the stream:
 
 ```sh
 ./scripts/loggen.sh /tmp/app.log      # Ctrl+C to stop
@@ -64,10 +61,10 @@ Or push JSON:
 
 ```sh
 curl -X POST --data-binary @app.jsonl \
-  'http://127.0.0.1:9429/insert/jsonline?_stream_fields=service,host&_time_field=ts'
+  'http://127.0.0.1:9429/ingest?stream=service,host&time_field=ts'
 ```
 
-Nested objects are flattened to dotted names (`{"http":{"status":500}}` becomes `http.status=500`). The time field can be RFC 3339 or a unix timestamp in seconds, milliseconds, microseconds or nanoseconds. If one line in a request is bad, the whole request is rejected with a 400 that names the line, so a retry never stores half a batch twice.
+Nested objects are flattened to dotted names (`{"http":{"status":500}}` becomes `http.status=500`). The time field can be RFC 3339 or a unix timestamp in seconds, milliseconds, microseconds or nanoseconds; without one, the row gets the time it arrived. `msg_field` picks which field becomes the message. If one line in a request is bad, the whole request is rejected with a 400 that names the line, so a retry never stores half a batch twice.
 
 ### Querying
 
@@ -76,7 +73,7 @@ Nested objects are flattened to dotted names (`{"http":{"status":500}}` becomes 
 COL=service ./scripts/query.sh checkout    # match a word in another field
 ```
 
-Under the hood that is a JSON query sent to the insert/select node:
+Under the hood that is a JSON query sent to the router:
 
 ```sh
 curl -X GET -d '{"MinTimestamp":0,"MaxTimestamp":9000000000000000000,
@@ -88,27 +85,51 @@ Filters match whole words, case-sensitively, and are ANDed together. That is the
 
 ## Numbers
 
-All of these come from the test suite (`make stageN` prints them), on an M2 Mac mini.
-
-STAGE_NUMBERS_TABLE
+From the test suite on an M2 Mac mini (`go test -v` prints them).
 
 | | |
 |---|---|
-| Agent throughput, 100 rows per block | 5.9k rows/s |
-| Agent throughput, 10,000 rows per block | 412k rows/s |
-| Rows stored when a node dies after storing but before replying (5,000 sent) | 10,000 |
+| 200k synthetic log rows on disk vs raw | 8.7 MiB vs 64 MiB (7.4x) |
+| Timestamps after delta + varint encoding | 3.6 bytes per row, down from 8 |
+| Bloom filter false positives, 16 bits per token | 0.094% measured, 0.094% predicted |
+| Blocks skipped when searching for a rare word | 375 of 400 (94%) |
+| Partitions opened by a 1-hour query over 90 days of data | 1 of 91 |
 | Lines re-sent after a tailer restart, with / without a checkpoint | 0 / 150 |
 | End-to-end delay from a line in a file to a query result | 2–4 s |
-
-The batching row is the reason the agent buffers at all: writing a block to the queue costs about 17 ms whatever its size, so small blocks waste almost all of it. The duplicates row is the price of at-least-once delivery, and it is the same price VictoriaLogs pays.
 
 ## What it does not do
 
 - **No write-ahead log.** Rows in a storage node's memory (up to a second's worth) are lost if the process is killed with `kill -9`. A clean shutdown flushes them. `make crash` kills the process 200 times mid-write and checks that it always comes back with no corruption and nothing missing that was already on disk.
 - **At-least-once, not exactly-once.** Retries can store a row twice. There is no dedup.
-- **No real query language.** Time range, AND of word filters, limit. No regex, no aggregation, no pipes.
-- **No replication inside the cluster, no consensus, no rebalancing.** The node list is a flag. For two copies, point the agent at two clusters. VictoriaLogs works the same way.
-- **The merge policy is the simplest one that works.** Eight parts become one, always the whole partition. With a flush every second that means the current day gets rewritten every eight seconds, which is fine for a demo and gets more expensive as the day fills up. A real LSM merges parts of similar size instead.
-- **No automatic retention.** `MustDropPartitionsBefore` drops old days, but nothing calls it on a schedule yet, and the `RetentionDays` setting is not wired up.
-- **The tailer follows files by path and notices truncation by size.** If a file is rotated and grows past the old offset before the next poll, it will miss that.
-- **No auth, TLS, tenants or compression on the wire.**
+- **No real query language.** Time range, AND of word filters, limit. No regex, no aggregation.
+- **No replication inside the cluster, no consensus, no rebalancing.** The node list is a flag. For two copies, point the agent at two clusters.
+- **The merge policy is the simplest one that works.** Eight parts become one, always the whole partition. With a flush every second the current day gets rewritten every eight seconds, which is fine for a demo and gets more expensive as the day fills up. Merging parts of similar size would fix it.
+- **No automatic retention.** `MustDropPartitionsBefore` drops old days, but nothing calls it on a schedule yet.
+- **The tailer follows files by path and notices truncation by size.** If a file is rotated and grows past the old offset before the next poll, it misses that.
+- **No auth, TLS or compression on the wire.**
+
+## Layout
+
+```
+storage/       storage engine: encoding, blocks, bloom filters, parts, merges, partitions
+internalapi/   wire format and the storage node's HTTP API
+netinsert/     routing and batching for inserts
+netselect/     fan-out, merge and limit pushdown for queries
+netstorage/    pairs the two so a cluster looks like a single storage
+agent/         disk queue, sender, JSON receiver, file tailer
+cmd/smologdb/  the server binary (storage, router and agent)
+cmd/crashtest/ kill -9 / recover torture test
+cmd/chaostest/ kills storage nodes during ingest
+integration/   end-to-end tests over real HTTP
+scripts/       demo, log generator, query helper
+```
+
+## Tests
+
+```sh
+make unit          # package tests
+make integration   # storage + router + agent together
+make race          # everything under the race detector
+make crash         # 200 kill -9 / recover cycles
+make chaos         # node kills across a 4-node cluster
+```
