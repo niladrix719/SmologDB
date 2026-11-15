@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,8 @@ type Config struct {
 
 	// RetentionDays, if > 0, drops partitions older than this many days.
 	RetentionDays int
+
+	FlushInterval time.Duration
 }
 
 // Storage is the top-level handle.
@@ -62,6 +65,9 @@ type shard struct {
 type Storage struct {
 	path string
 	cfg  *Config
+
+	wg   sync.WaitGroup
+	stop chan struct{}
 
 	// You will need: per-shard partition maps keyed by day, a mutex, and a
 	// background goroutine driving flushes and merges.
@@ -105,10 +111,29 @@ func MustOpenStorage(path string, cfg *Config) *Storage {
 		}
 	}
 
-	return &Storage{
+	s := &Storage{
 		path:   path,
 		cfg:    cfg,
 		shards: shards,
+	}
+	if cfg.FlushInterval > 0 {
+		s.wg.Add(1)
+		go s.flushLoop()
+	}
+	return s
+}
+
+func (s *Storage) flushLoop() {
+	defer s.wg.Done()
+	tick := time.NewTicker(s.cfg.FlushInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+			s.MustForceFlush()
+		}
 	}
 }
 
@@ -118,6 +143,8 @@ func MustOpenStorage(path string, cfg *Config) *Storage {
 // and findable after a reopen. The harnesses reopen and re-query constantly,
 // so a missing flush here shows up immediately.
 func (s *Storage) MustClose() {
+	close(s.stop)
+	s.wg.Wait()
 	s.MustForceFlush()
 	for _, shard := range s.shards {
 		shard.mu.Lock()

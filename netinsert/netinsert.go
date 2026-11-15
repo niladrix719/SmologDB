@@ -207,8 +207,8 @@ func (s *Storage) MustAddRows(rows []minilog.Row) {
 			toSend := s.nodes[nIdx].pending
 			s.nodes[nIdx].pending = nil
 			s.nodes[nIdx].pendingBytes = 0
-			s.nodes[nIdx].flush(s, toSend)
 			s.nodes[nIdx].lastFlush = time.Now()
+			s.nodes[nIdx].flush(s, toSend)
 		}
 		s.nodes[nIdx].mu.Unlock()
 	}

@@ -143,7 +143,7 @@ func runAgent(destinations []string, tmpDataPath, tailPaths, listenAddr string) 
 }
 
 func runStorageNode(dataPath, listenAddr string) {
-	s := minilog.MustOpenStorage(dataPath, &minilog.Config{ShardsCount: 0, RetentionDays: 0})
+	s := minilog.MustOpenStorage(dataPath, &minilog.Config{ShardsCount: 0, RetentionDays: 0, FlushInterval: time.Second})
 	handler := internalapi.NewStorageNodeHandler(s)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
