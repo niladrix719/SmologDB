@@ -83,6 +83,14 @@ curl -X GET -d '{"MinTimestamp":0,"MaxTimestamp":9000000000000000000,
 
 Filters match whole words, case-sensitively, and are ANDed together. That is the entire query language.
 
+### The UI
+
+```sh
+make ui        # then open http://127.0.0.1:3000
+```
+
+One page with three tabs. **Cluster** starts and stops storage nodes and the router, adds or removes nodes, and shows each process's output. **Agent** sets which log files to collect and shows how far into each one it has read, and can run a fake log generator. **Search** is the query box. Configuration is saved to `cluster-data/cluster.json`, and every node's data lives under `cluster-data/` too. The UI only accepts requests from this machine, since it can start processes and read files.
+
 ## Numbers
 
 From the test suite on an M2 Mac mini (`go test -v` prints them).
@@ -122,6 +130,7 @@ cmd/crashtest/ kill -9 / recover torture test
 cmd/chaostest/ kills storage nodes during ingest
 integration/   end-to-end tests over real HTTP
 scripts/       demo, log generator, query helper
+ui/            Next.js search page
 ```
 
 ## Tests

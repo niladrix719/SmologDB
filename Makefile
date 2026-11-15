@@ -1,8 +1,9 @@
-.PHONY: help build demo test unit integration race crash chaos vet clean
+.PHONY: help build demo ui test unit integration race crash chaos vet clean
 
 help:
 	@echo "make build        build ./smologdb"
 	@echo "make demo         start a local cluster, feed it logs, query them back"
+	@echo "make ui           run and search a cluster from the browser, http://127.0.0.1:3000"
 	@echo "make unit         package tests (fast)"
 	@echo "make integration  end-to-end tests across storage, router and agent"
 	@echo "make test         both"
@@ -15,6 +16,9 @@ build:
 
 demo:
 	./scripts/demo.sh
+
+ui:
+	cd ui && npm install && npm run dev
 
 unit:
 	go test $$(go list ./... | grep -v /integration)
