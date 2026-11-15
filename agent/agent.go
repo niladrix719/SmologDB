@@ -3,8 +3,6 @@
 // its own restarts.
 //
 // ---------------------------------------------------------------------------
-// STAGE 11 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage11 -v
 //
 // Reference: app/vlagent/remotewrite/remotewrite.go (one context per URL,
@@ -131,11 +129,6 @@ type DestStats struct {
 }
 
 // Agent accepts rows and guarantees their delivery to every destination.
-//
-// You will need: a []*destination, the resolved config, the block under
-// construction (a mutex, a []minilog.Row, and a running size estimate -- NOT
-// encoded bytes, see MustAddRows), a stop channel, and a WaitGroup for the
-// senders and the flush ticker.
 type Agent struct {
 	dests []*destination
 
@@ -151,13 +144,6 @@ type Agent struct {
 }
 
 // destination is one address: its queue, its sender, its counters.
-//
-// You will need: the address, the *queue, a mutex that serializes queue
-// access between MustFlush (writer) and the sender (reader), a way for the
-// sender to WAIT when the queue is empty rather than spin -- sync.Cond over
-// that mutex is the standard tool, and the real one uses exactly that -- an
-// *http.Client with its own Transport (stage 9 taught you why), and the
-// counters behind DestStats.
 type destination struct {
 	addr   string
 	client *http.Client

@@ -1,7 +1,9 @@
-.PHONY: help stage1 stage2 stage3 stage4 stage6 stage7 stage8 stage9 stage10 stage11 stage12 test race crash chaos vet clean
+.PHONY: help demo stage1 stage2 stage3 stage4 stage6 stage7 stage8 stage9 stage10 stage11 stage12 test race crash chaos vet clean
 
 help:
-	@echo "minilog -- a 1500-line VictoriaLogs, built by you"
+	@echo "minilog -- a small distributed log store modelled on VictoriaLogs"
+	@echo ""
+	@echo "  make demo     start a local cluster, feed it logs, query them back"
 	@echo ""
 	@echo "  make stage1   encoding + block + part round-trip, compression ratio"
 	@echo "  make stage2   bloom filter FP rate vs theory, block skip ratio"
@@ -21,8 +23,9 @@ help:
 	@echo "  make race     all stages under the race detector"
 	@echo "  make crash    200 kill -9 / recover iterations"
 	@echo "  make chaos    200 storage-node kills across a 4-node cluster"
-	@echo ""
-	@echo "Every stage fails loudly until you implement it. That is the point."
+
+demo:
+	./scripts/demo.sh
 
 stage1:
 	go test ./harness -run '^TestStage1[A-Za-z]' -v

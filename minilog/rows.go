@@ -8,10 +8,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// COMPLETE -- you should not need to modify this file.
-//
 // These are the logical types that cross the public API boundary. Everything
-// below the API (blocks, columns, parts) is yours to design.
+// below the API (blocks, columns, parts) is internal to the package.
 // ---------------------------------------------------------------------------
 
 // Field is a single name/value pair in a log entry.

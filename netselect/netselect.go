@@ -2,9 +2,6 @@
 // to every storage node, merges the answers, and merges the stats.
 //
 // ---------------------------------------------------------------------------
-// STAGE 8 (fan-out, merge), STAGE 9 (partial responses), STAGE 10 (pushdown)
-// -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage8 -v
 //
 //	go test ./harness -run TestStage9 -v
@@ -245,7 +242,7 @@ func mergeSortedRows(streams [][]minilog.Row) []minilog.Row {
 }
 
 // ---------------------------------------------------------------------------
-// STAGE 9 -- failure
+// Failure handling
 // ---------------------------------------------------------------------------
 
 // errUnavailable marks a node that did not respond at all, as opposed to one

@@ -1,9 +1,8 @@
 // Command chaostest kills storage nodes at random moments during a
 // distributed ingest and checks what survives.
 //
-// COMPLETE -- do not modify. This is cmd/crashtest one level up: crashtest
-// kills the process that owns the data, chaostest kills one of several
-// processes that each own part of it.
+// It is cmd/crashtest one level up: crashtest kills the process that owns
+// the data, chaostest kills one of several processes that each own part of it.
 //
 // Usage:
 //

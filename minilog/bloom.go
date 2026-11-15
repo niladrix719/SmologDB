@@ -3,8 +3,6 @@ package minilog
 import "github.com/cespare/xxhash/v2"
 
 // ---------------------------------------------------------------------------
-// STAGE 2 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage2 -v
 //
 // The FP-rate harness compares your measured false-positive rate against the

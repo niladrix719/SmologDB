@@ -1,8 +1,6 @@
 package agent
 
 // ---------------------------------------------------------------------------
-// STAGE 12 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./agent -run TestStage12 -v     (readNewLines, checkpoints)
 //               go test ./harness -run TestStage12Tailer -v
 //
@@ -156,7 +154,7 @@ func readNewLines(path string, offset int64) (lines [][]byte, newOffset int64, e
 	return lns, nwOffset, nil
 }
 
-// lineToRow turns one text line into a Row. COMPLETE.
+// lineToRow turns one text line into a Row.
 //
 // The message is the line, the stream is the file, and the time is when we
 // read it. The row's fields are sorted by name, as Row requires: "_msg" sorts
@@ -259,9 +257,6 @@ func mustSaveCheckpoints(path string, cps map[string]int64) {
 }
 
 // Tailer follows files and feeds a sink.
-//
-// You will need: the config, the sink, a map of path -> offset (the in-memory
-// progress), a stop channel, and a WaitGroup for the poll goroutine.
 type Tailer struct {
 	cfg         TailerConfig
 	sink        FlushSink

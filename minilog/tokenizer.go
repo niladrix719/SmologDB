@@ -1,8 +1,6 @@
 package minilog
 
 // ---------------------------------------------------------------------------
-// STAGE 2 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage2Tokenizer -v
 //
 // Reference: lib/logstorage/tokenizer.go in VictoriaLogs.

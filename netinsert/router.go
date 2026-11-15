@@ -6,8 +6,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// STAGE 7 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage7 -v
 //
 // Reference: streamRowsTracker in app/vlstorage/netinsert/netinsert.go.
@@ -62,7 +60,7 @@ const (
 	RoutingSpray
 )
 
-// String returns the policy name, for tables and error messages. COMPLETE.
+// String returns the policy name, for tables and error messages.
 func (p RoutingPolicy) String() string {
 	switch p {
 	case RoutingHybrid:

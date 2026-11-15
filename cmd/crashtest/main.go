@@ -2,9 +2,6 @@
 // that the storage recovers with no corruption and no loss of acknowledged
 // data.
 //
-// COMPLETE -- do not modify. This is the test that decides whether you built a
-// storage engine or a toy.
-//
 // Usage:
 //
 //	go run ./cmd/crashtest                 # 200 iterations

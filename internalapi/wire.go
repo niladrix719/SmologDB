@@ -2,8 +2,6 @@
 // storage nodes.
 //
 // ---------------------------------------------------------------------------
-// STAGE 6 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage6 -v
 // Also run:     go test ./harness -run FuzzStage6RowRoundTrip -fuzz . -fuzztime 60s
 //
@@ -33,8 +31,6 @@ import (
 
 // ProtocolVersion is the version of the insert/select protocol.
 //
-// COMPLETE (the const) -- but you must send and check it.
-//
 // It is sent as a ?version= query arg on every internal request, and the
 // storage node rejects a mismatch with a 400 before reading a single byte of
 // body. That check is the entire mechanism that makes a rolling upgrade safe:
@@ -48,7 +44,7 @@ import (
 // this size -- but note the tradeoff you are accepting.
 const ProtocolVersion = "v1"
 
-// Endpoint paths. COMPLETE.
+// Endpoint paths.
 //
 // Names match VictoriaLogs so that when you go read the real handlers in
 // app/vlinsert/internalinsert and app/vlselect/internalselect, the routing

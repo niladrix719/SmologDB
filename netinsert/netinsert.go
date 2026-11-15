@@ -2,9 +2,6 @@
 // storage nodes, batches them, and ships them over HTTP.
 //
 // ---------------------------------------------------------------------------
-// STAGE 7 (routing, batching) and STAGE 9 (failure, re-routing)
-// -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage7 -v
 //
 //	go test ./harness -run TestStage9 -v
@@ -94,9 +91,6 @@ type Config struct {
 // absent -- an insert node cannot answer queries, and netstorage.Storage is
 // what pairs this with a netselect.Storage to make a whole.
 type Storage struct {
-	// You will need: a []*storageNode, a *router, a buffer pool, a stop
-	// channel, and a WaitGroup for the background flushers.
-	//
 	nodes   []*storageNode
 	router  *router
 	bufPool sync.Pool
@@ -111,10 +105,6 @@ type Storage struct {
 
 // storageNode is one remote node and the pending data destined for it.
 type storageNode struct {
-	// You will need: the address, an *http.Client, a mutex-guarded pending
-	// buffer, the time of the last flush, and an atomic "disabled until"
-	// timestamp.
-	//
 	// Reuse ONE http.Client per node and let it pool connections. A fresh
 	// client per request means a fresh TCP handshake per request, and on a
 	// batch-per-second workload that is most of your latency. Set
@@ -312,7 +302,7 @@ func (s *Storage) NodeReroutedRows() []int64 {
 }
 
 // ---------------------------------------------------------------------------
-// STAGE 9
+// Sending, and what happens when a node is down
 // ---------------------------------------------------------------------------
 
 func (sn *storageNode) flush(s *Storage, rows []minilog.Row) {

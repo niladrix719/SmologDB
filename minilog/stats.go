@@ -6,12 +6,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// COMPLETE -- you should not need to modify this file, but you MUST call into
-// it from your implementation. The harness measurements read these counters;
-// if you never increment them, the harness will report zeros and fail.
+// The harness measurements read these counters; a code path that forgets to
+// increment them makes the harness report zeros and fail.
 //
-// Every counter below has a comment naming the exact place your code must
-// bump it.
+// Every counter below has a comment naming the exact place the code bumps it.
 // ---------------------------------------------------------------------------
 
 // SearchStats is per-query instrumentation.

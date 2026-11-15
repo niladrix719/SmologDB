@@ -1,8 +1,6 @@
 package agent
 
 // ---------------------------------------------------------------------------
-// STAGE 12 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./agent -run TestStage12 -v     (parsing, handler)
 //               go test ./harness -run TestStage12 -v   (end to end)
 //
@@ -91,7 +89,7 @@ type ParseParams struct {
 	TimeFields []string
 }
 
-// withDefaults returns p with the two empty defaults filled in. COMPLETE.
+// withDefaults returns p with the two empty defaults filled in.
 func (p ParseParams) withDefaults() ParseParams {
 	if len(p.MsgFields) == 0 {
 		p.MsgFields = []string{"_msg"}
@@ -277,7 +275,7 @@ type receiver struct {
 	defaults ParseParams
 }
 
-// NewReceiver returns a handler serving POST /insert/jsonline. COMPLETE.
+// NewReceiver returns a handler serving POST /insert/jsonline.
 //
 // defaults may be nil. Every request can override them with query args; see
 // ServeHTTP.
@@ -359,7 +357,6 @@ func (rc *receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // queryParams returns defaults with any of the three query args applied.
-// COMPLETE.
 func queryParams(r *http.Request, defaults ParseParams) ParseParams {
 	q := r.URL.Query()
 	if v := q.Get("_stream_fields"); v != "" {
@@ -374,7 +371,7 @@ func queryParams(r *http.Request, defaults ParseParams) ParseParams {
 	return defaults.withDefaults()
 }
 
-// splitList splits a comma-separated list, dropping empty items. COMPLETE.
+// splitList splits a comma-separated list, dropping empty items.
 func splitList(s string) []string {
 	var out []string
 	for _, item := range strings.Split(s, ",") {

@@ -12,8 +12,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// STAGE 11 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage11 -v
 //
 // Reference: lib/persistentqueue/persistentqueue.go in VictoriaMetrics (it is
@@ -91,10 +89,6 @@ type QueueStats struct {
 // Concurrency: NONE. The queue is single-threaded by contract, same as the
 // real one. The caller (destination, in agent.go) owns the lock. Putting a
 // mutex in here as well would be two locks for one invariant.
-//
-// You will need: the dir, the three size limits, reader and writer offsets,
-// the currently open reader and writer *os.File with their local offsets,
-// and the counters behind QueueStats.
 type queue struct {
 	dir             string
 	chunkFileSize   int64
@@ -122,55 +116,14 @@ type metainfo struct {
 }
 
 func (q *queue) mustWriteMetainfo() {
-	var f *os.File
-	var b []byte
-	var n int
-	var err error
-	f, err = os.Create(filepath.Join(q.dir, "metainfo.json.tmp"))
-	if err != nil {
-		panic(err)
-	}
-	mi := &metainfo{
+	b, err := json.Marshal(&metainfo{
 		ReaderOffset: q.readerOffset,
 		WriterOffset: q.writerOffset,
-	}
-	b, err = json.Marshal(mi)
+	})
 	if err != nil {
 		panic(err)
 	}
-	n, err = f.Write(b)
-	if err != nil {
-		panic(err)
-	}
-	err = f.Sync()
-	if err != nil {
-		panic(err)
-	}
-	if n != len(b) {
-		panic("short write")
-	}
-	err = f.Close()
-	if err != nil {
-		panic(err)
-	}
-
-	err = os.Rename(filepath.Join(q.dir, "metainfo.json.tmp"), filepath.Join(q.dir, "metainfo.json"))
-	if err != nil {
-		panic(err)
-	}
-
-	f, err = os.Open(q.dir)
-	if err != nil {
-		panic(err)
-	}
-	err = f.Sync()
-	if err != nil {
-		panic(err)
-	}
-	err = f.Close()
-	if err != nil {
-		panic(err)
-	}
+	mustWriteFileAtomic(filepath.Join(q.dir, "metainfo.json"), b)
 }
 
 func readMetainfo(dir string) metainfo {

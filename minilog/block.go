@@ -3,8 +3,6 @@ package minilog
 import "fmt"
 
 // ---------------------------------------------------------------------------
-// STAGE 1 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage1 -v
 //
 // Reference: lib/logstorage/block.go and block_header.go in VictoriaLogs.

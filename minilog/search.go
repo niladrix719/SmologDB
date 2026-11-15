@@ -1,9 +1,6 @@
 package minilog
 
 // ---------------------------------------------------------------------------
-// COMPLETE (types) / STAGE 1+2 (matching logic) -- the Query type is fixed so
-// the harnesses can construct queries. Filter.Matches is yours.
-//
 // Deliberately tiny query model: a time range plus an AND of (column, token)
 // filters. No parser, no pipes, no aggregation. That is enough to exercise
 // every skipping mechanism and nothing more -- adding a query language would

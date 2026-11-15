@@ -11,7 +11,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// STAGE 3 (parts.json, crash safety) and STAGE 4 (day partitions).
+// Day partitions, the parts.json manifest, and crash recovery.
 //
 // Verified by:  go test ./harness -run 'TestStage3|TestStage4' -v
 //               go run ./cmd/crashtest
@@ -46,12 +46,6 @@ type partition struct {
 	path string
 	day  int64
 
-	// You will need, at minimum:
-	//   - a mutex guarding the parts list
-	//   - the in-memory part currently accepting writes
-	//   - the list of open *part
-	//   - a background merge goroutine + a stop channel
-	//
 	// Concurrency requirement: queries must be able to run while a merge is
 	// in progress. Since parts are immutable, the only thing needing
 	// synchronisation is the parts LIST. Reference-count open parts so a

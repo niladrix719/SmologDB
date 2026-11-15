@@ -1,9 +1,8 @@
 // Package gen produces deterministic synthetic log data shaped like real
 // Kubernetes application logs.
 //
-// COMPLETE -- you should not need to modify this package. The harness
-// measurements depend on its exact distributions (cardinalities, rare-token
-// injection rate), so changing it changes what the numbers mean.
+// The harness measurements depend on its exact distributions (cardinalities,
+// rare-token injection rate), so changing it changes what the numbers mean.
 package gen
 
 import (

@@ -9,8 +9,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// STAGE 1 (open/read) and STAGE 2 (bloom skipping) -- YOUR IMPLEMENTATION.
-//
 // Verified by:  go test ./harness -run 'TestStage1|TestStage2' -v
 //
 // Reference: lib/logstorage/part.go, block_search.go, block_stream_reader.go.

@@ -2,8 +2,6 @@
 // node, or (stage 12) an agent, depending on which flags were passed.
 //
 // ---------------------------------------------------------------------------
-// STAGE 6 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go run ./cmd/chaostest    (which spawns these)
 //
 //	and by hand, per the examples below.

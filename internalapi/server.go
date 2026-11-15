@@ -1,8 +1,6 @@
 package internalapi
 
 // ---------------------------------------------------------------------------
-// STAGE 6 -- YOUR IMPLEMENTATION GOES HERE.
-//
 // Verified by:  go test ./harness -run TestStage6 -v
 //
 // Reference: app/vlinsert/internalinsert/internalinsert.go (the /internal/insert
@@ -148,9 +146,8 @@ func (h *StorageNodeHandler) handleForceFlush(w http.ResponseWriter, r *http.Req
 // CheckVersion reports whether r carries a compatible protocol version, and
 // writes the rejection itself if not.
 //
-// COMPLETE -- the one piece of this file that is given to you, because getting
-// it subtly wrong (defaulting an absent version to "compatible", say) defeats
-// the entire point of having a version.
+// Getting this subtly wrong (defaulting an absent version to "compatible",
+// say) defeats the entire point of having a version.
 func CheckVersion(w http.ResponseWriter, r *http.Request) bool {
 	got := r.URL.Query().Get(VersionArg)
 	if got == ProtocolVersion {

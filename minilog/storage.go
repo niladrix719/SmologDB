@@ -11,8 +11,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// STAGE 3 (basic) and STAGE 4 (partitions, sharding) -- YOUR IMPLEMENTATION.
-//
 // Verified by:  go test ./harness -v   (all stages use this API)
 //
 // Reference: lib/logstorage/storage.go, storage_search.go.
@@ -69,8 +67,6 @@ type Storage struct {
 	wg   sync.WaitGroup
 	stop chan struct{}
 
-	// You will need: per-shard partition maps keyed by day, a mutex, and a
-	// background goroutine driving flushes and merges.
 	shards []*shard
 }
 
@@ -115,6 +111,7 @@ func MustOpenStorage(path string, cfg *Config) *Storage {
 		path:   path,
 		cfg:    cfg,
 		shards: shards,
+		stop:   make(chan struct{}),
 	}
 	if cfg.FlushInterval > 0 {
 		s.wg.Add(1)

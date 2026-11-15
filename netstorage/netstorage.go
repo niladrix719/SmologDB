@@ -2,8 +2,6 @@
 // two together satisfy minilog.LogStorage.
 //
 // ---------------------------------------------------------------------------
-// COMPLETE -- you should not need to modify this file.
-//
 // Reference: app/vlstorage/main.go, which holds exactly these two values
 // (netstorageInsert, netstorageSelect) plus a localStorage, and dispatches to
 // whichever is non-nil.

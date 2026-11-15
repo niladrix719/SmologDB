@@ -1,8 +1,6 @@
 package minilog
 
 // ---------------------------------------------------------------------------
-// COMPLETE -- you should not need to modify this file.
-//
 // This is the seam the whole cluster hangs off. See CLUSTER.md, stage 6.
 //
 // Reference: app/vlstorage/main.go in VictoriaLogs, which holds a localStorage,
