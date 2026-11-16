@@ -1,5 +1,7 @@
 # SmologDB
 
+<img width="1774" height="492" alt="SmologDB Minimal Tech Logo-2" src="https://github.com/user-attachments/assets/b07ea646-e4b6-4765-9146-032efd1f0a8b" />
+
 A small log database I built to understand how time series databases work on the inside. It stores logs in compressed columns with a bloom filter per block, merges parts as they pile up like an LSM tree, splits data across storage nodes, and ships with an agent that tails files or accepts JSON over HTTP and keeps a disk queue so nothing is lost while the cluster is down.
 
 About 4,700 lines of Go plus 3,200 lines of tests. The only dependency is `xxhash`.
