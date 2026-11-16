@@ -1,4 +1,4 @@
-<img width="1774" height="492" alt="SmologDB Minimal Tech Logo-2" src="https://github.com/user-attachments/assets/b07ea646-e4b6-4765-9146-032efd1f0a8b" />
+<img width="2172" height="724" alt="SmologDB Time-Series Log Database" src="https://github.com/user-attachments/assets/331d7fd3-0a6c-41c2-bb07-82c31231fd56" />
 
 A small log database I built to understand how time series databases work on the inside. It stores logs in compressed columns with a bloom filter per block, merges parts as they pile up like an LSM tree, splits data across storage nodes, and ships with an agent that tails files or accepts JSON over HTTP and keeps a disk queue so nothing is lost while the cluster is down.
 
