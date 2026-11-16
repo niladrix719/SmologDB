@@ -236,8 +236,11 @@ func (p *part) mustReadBlockRows(bh *blockHeader, q *Query, ss *SearchStats) []R
 	var cols []column
 	var allRows []Row
 	var rows []Row
+	var n int
+	var err error
 	tsBuf := make([]byte, bh.timestampsSize)
-	_, err := p.timestampsFile.ReadAt(tsBuf, int64(bh.timestampsOffset))
+	n, err = p.timestampsFile.ReadAt(tsBuf, int64(bh.timestampsOffset))
+	ss.BytesReadFromDisk += int64(n)
 	if err != nil {
 		panic(err)
 	}
@@ -247,7 +250,8 @@ func (p *part) mustReadBlockRows(bh *blockHeader, q *Query, ss *SearchStats) []R
 	}
 	for _, colh := range bh.columns {
 		valuesBuf := make([]byte, colh.valuesSize)
-		_, err = p.valuesFile.ReadAt(valuesBuf, int64(colh.valuesOffset))
+		n, err = p.valuesFile.ReadAt(valuesBuf, int64(colh.valuesOffset))
+		ss.BytesReadFromDisk += int64(n)
 		if err != nil {
 			panic(err)
 		}
@@ -267,9 +271,12 @@ func (p *part) mustReadBlockRows(bh *blockHeader, q *Query, ss *SearchStats) []R
 		columns:      cols,
 		constColumns: bh.constColumns,
 	}
+	ss.BlocksScanned++
 	allRows = b.appendRows(allRows)
 	for _, row := range allRows {
+		ss.RowsScanned++
 		if q.MatchesRow(&row) {
+			ss.RowsMatched++
 			rows = append(rows, row)
 		}
 	}

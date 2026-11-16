@@ -1,5 +1,10 @@
 package storage
 
+import (
+	"cmp"
+	"slices"
+)
+
 func mustMergeParts(dstPath string, srcParts []*part) *partMetadata {
 	var rows []Row
 	var blocks []block
@@ -27,8 +32,19 @@ func mustMergeParts(dstPath string, srcParts []*part) *partMetadata {
 }
 
 func partsToMerge(parts []*part) []*part {
-	if len(parts) < SmallPartsMergeThreshold {
-		return nil
+	partsClone := slices.Clone(parts)
+	slices.SortFunc(partsClone, func(a, b *part) int {
+		return cmp.Compare(a.md.SizeBytes, b.md.SizeBytes)
+	})
+	for start := range partsClone {
+		base := partsClone[start].md.SizeBytes
+		end := start
+		for end < len(partsClone) && partsClone[end].md.SizeBytes <= base*4 {
+			end++
+		}
+		if end-start >= SmallPartsMergeThreshold {
+			return partsClone[start:end]
+		}
 	}
-	return parts
+	return nil
 }

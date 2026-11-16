@@ -160,7 +160,17 @@ func (pt *partition) maybeMergeParts() {
 	partmd := mustMergeParts(newPath, parts)
 	newPart := mustOpenPart(newPath)
 	oldParts := parts
-	pt.parts = []*part{newPart}
+	mergedParts := make(map[*part]struct{}, len(oldParts))
+	for _, p := range oldParts {
+		mergedParts[p] = struct{}{}
+	}
+	var remainingParts []*part
+	for _, p := range pt.parts {
+		if _, ok := mergedParts[p]; !ok {
+			remainingParts = append(remainingParts, p)
+		}
+	}
+	pt.parts = append(remainingParts, newPart)
 	Metrics.BytesLiveOnDisk.Add(int64(partmd.SizeBytes))
 
 	var names []string
@@ -182,8 +192,16 @@ func (pt *partition) maybeMergeParts() {
 
 func (pt *partition) search(q *Query, ss *SearchStats) []Row {
 	var rows []Row
+	for _, row := range pt.inmemRows {
+		if q.MatchesRow(&row) {
+			rows = append(rows, row)
+		}
+	}
 	for _, part := range pt.parts {
 		ss.PartsTotal++
+		if q.MaxTimestamp < part.md.MinTimestamp || q.MinTimestamp > part.md.MaxTimestamp {
+			continue
+		}
 		ss.PartsOpened++
 		for _, bh := range part.searchBlockHeaders(q, ss) {
 			rows = append(rows, part.mustReadBlockRows(bh, q, ss)...)
