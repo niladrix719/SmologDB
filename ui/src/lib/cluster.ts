@@ -30,6 +30,8 @@ type Proc = {
 };
 
 // Survives module reloads in `next dev`, so running processes aren't forgotten.
+// TODO(#14): but not a restart of the dev server: the nodes keep running untracked. Save the
+// pids under cluster-data/ and re-attach to (or stop) the ones still alive on startup.
 const g = globalThis as unknown as { __smologdbProcs?: Map<string, Proc> };
 const procs = (g.__smologdbProcs ??= new Map<string, Proc>());
 

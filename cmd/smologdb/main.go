@@ -23,7 +23,7 @@ import (
 )
 
 const usage = `usage:
-  smologdb storage -data DIR [-listen ADDR]
+  smologdb storage -data DIR [-listen ADDR] [-retention-days N]
   smologdb router  -nodes ADDR,ADDR [-listen ADDR]
   smologdb agent   -send-to ADDR[,ADDR] -dir DIR [-tail FILE,FILE] [-listen ADDR]
 `
@@ -38,11 +38,15 @@ func main() {
 	switch os.Args[1] {
 	case "storage":
 		data := fs.String("data", "", "data directory")
+		retention := fs.Int("retention-days", 0, "keep today and the days before it, this many days in all; 0 keeps everything")
 		fs.Parse(os.Args[2:])
 		if *data == "" {
 			log.Fatal("-data is required")
 		}
-		runStorageNode(*data, *listen)
+		if *retention < 0 {
+			log.Fatal("-retention-days must be 0 or more")
+		}
+		runStorageNode(*data, *listen, *retention)
 	case "router":
 		nodes := fs.String("nodes", "", "comma-separated storage node addresses")
 		fs.Parse(os.Args[2:])
@@ -70,7 +74,7 @@ func runAgent(destinations []string, dir, tailPaths, listenAddr string) {
 		Addrs:    destinations,
 		DataPath: dir,
 	})
-	srv := &http.Server{Addr: listenAddr, Handler: agent.NewReceiver(ag, nil)}
+	srv := &http.Server{Addr: listenAddr, Handler: withAdmin(agent.NewReceiver(ag, nil))}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("agent http server stopped: %v", err)
@@ -98,13 +102,13 @@ func runAgent(destinations []string, dir, tailPaths, listenAddr string) {
 	ag.MustClose()
 }
 
-func runStorageNode(dataPath, listenAddr string) {
-	s := storage.MustOpenStorage(dataPath, &storage.Config{FlushInterval: time.Second})
+func runStorageNode(dataPath, listenAddr string, retentionDays int) {
+	s := storage.MustOpenStorage(dataPath, &storage.Config{FlushInterval: 5 * time.Second, RetentionDays: retentionDays})
 	handler := internalapi.NewStorageNodeHandler(s)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		err := http.ListenAndServe(listenAddr, handler)
+		err := http.ListenAndServe(listenAddr, withAdmin(handler))
 		if err != nil {
 			log.Printf("storage http server stopped: %v", err)
 		}
@@ -178,11 +182,12 @@ func runRouter(nodeAddrs []string, listenAddr string) {
 	handler := &routerHandler{s: s}
 	mux := http.NewServeMux()
 	mux.Handle("/internal/", internalapi.NewStorageNodeHandler(s))
+	mux.Handle("/select", newSelectHandler(s))
 	mux.Handle("/", handler)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		err := http.ListenAndServe(listenAddr, mux)
+		err := http.ListenAndServe(listenAddr, withAdmin(mux))
 		if err != nil {
 			log.Printf("router http server stopped: %v", err)
 		}
@@ -198,4 +203,19 @@ func runRouter(nodeAddrs []string, listenAddr string) {
 	case <-time.After(5 * time.Second):
 		log.Printf("router close timed out after 5s; exiting anyway")
 	}
+}
+
+// newSelectHandler serves GET /select?q=...&limit=N&since=DURATION as newline-delimited
+// JSON, one row per line, newest first.
+// TODO(#10): not implemented yet. See TODO.md for the parameters and the output format.
+func newSelectHandler(s storage.LogStorage) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "/select is not implemented yet", http.StatusNotImplemented)
+	})
+}
+
+// withAdmin adds GET /health and GET /metrics in front of a role's own handler.
+// TODO(#12): not implemented yet; it passes every request straight to next.
+func withAdmin(next http.Handler) http.Handler {
+	return next
 }

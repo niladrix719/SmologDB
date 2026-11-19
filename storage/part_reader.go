@@ -194,11 +194,14 @@ func (p *part) searchBlockHeaders(q *Query, ss *SearchStats) []*blockHeader {
 					}
 				}
 				if fi != nil {
-					if !f.Matches(fi.Value) {
+					if f.Matches(fi.Value) == f.Not {
 						matches = false
 						break
 					}
 				} else if ch != nil {
+					if f.Not || f.Kind == MatchPrefix {
+						continue
+					}
 					bloomBuf := make([]byte, ch.bloomSize)
 					_, err := p.bloomFile.ReadAt(bloomBuf, int64(ch.bloomOffset))
 					if err != nil {
@@ -209,11 +212,13 @@ func (p *part) searchBlockHeaders(q *Query, ss *SearchStats) []*blockHeader {
 					if err != nil {
 						panic(err)
 					}
-					if !bl.Contains(f.Token) {
-						matches = false
-						break
+					for _, tok := range Tokenize(nil, f.Token) {
+						if !bl.Contains(tok) {
+							matches = false
+							break
+						}
 					}
-				} else {
+				} else if !f.Not {
 					matches = false
 					break
 				}

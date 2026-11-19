@@ -3,6 +3,8 @@ package integration
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/niladrix719/smologdb/gen"
@@ -66,4 +68,14 @@ func rowsEqual(a, b []storage.Row) (bool, string) {
 		}
 	}
 	return true, ""
+}
+
+// testRow builds a row from name/value pairs, with fields sorted by name as Row requires.
+func testRow(streamID uint64, ts int64, nameValues ...string) storage.Row {
+	r := storage.Row{Timestamp: ts, StreamID: streamID}
+	for i := 0; i+1 < len(nameValues); i += 2 {
+		r.Fields = append(r.Fields, storage.Field{Name: nameValues[i], Value: nameValues[i+1]})
+	}
+	slices.SortFunc(r.Fields, func(a, b storage.Field) int { return strings.Compare(a.Name, b.Name) })
+	return r
 }

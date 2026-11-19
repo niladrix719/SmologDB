@@ -49,6 +49,8 @@ make build
 ./smologdb agent   -send-to 127.0.0.1:9000 -dir ./agent-data -listen 127.0.0.1:9429 -tail /tmp/app.log
 ```
 
+A storage node keeps everything unless you pass `-retention-days N`. It then keeps today and the N-1 days before it: older days are deleted when the node starts and then every hour, and rows older than that are not stored.
+
 ### Sending logs
 
 Tail a file. Each line becomes `_msg`, and the file path becomes the stream:
@@ -112,7 +114,6 @@ From the test suite on an M2 Mac mini (`go test -v` prints them).
 - **No real query language.** Time range, AND of word filters, limit. No regex, no aggregation.
 - **No replication inside the cluster, no consensus, no rebalancing.** The node list is a flag. For two copies, point the agent at two clusters.
 - **The merge policy is the simplest one that works.** Eight parts become one, always the whole partition. With a flush every second the current day gets rewritten every eight seconds, which is fine for a demo and gets more expensive as the day fills up. Merging parts of similar size would fix it.
-- **No automatic retention.** `MustDropPartitionsBefore` drops old days, but nothing calls it on a schedule yet.
 - **The tailer follows files by path and notices truncation by size.** If a file is rotated and grows past the old offset before the next poll, it misses that.
 - **No auth, TLS or compression on the wire.**
 

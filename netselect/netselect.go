@@ -80,7 +80,7 @@ func (s *Storage) Search(q *storage.Query) ([]storage.Row, *storage.SearchStats)
 		log.Printf("search degraded: %d of %d nodes failed:%v", failedNodes, len(s.nodes), err)
 	}
 	// Each node already cut its sorted rows to Limit, so the first Limit rows of the merge are exact.
-	rows := mergeSortedRows(rowss)
+	rows := mergeSortedRows(rowss, q.Newest)
 	rows = q.ApplyLimit(rows)
 	ss := &storage.SearchStats{}
 	for _, stat := range sss {
@@ -139,7 +139,7 @@ func (sn *storageNode) runQuery(q *storage.Query) ([]storage.Row, *storage.Searc
 	return rows, ss, nil
 }
 
-func mergeSortedRows(streams [][]storage.Row) []storage.Row {
+func mergeSortedRows(streams [][]storage.Row, newest bool) []storage.Row {
 	idxs := make([]int, len(streams))
 	var rows []storage.Row
 	for {
@@ -149,7 +149,13 @@ func mergeSortedRows(streams [][]storage.Row) []storage.Row {
 			if len(streams[i]) <= idxs[i] {
 				continue
 			}
-			if sIdx == -1 || streams[i][idxs[i]].StreamID < small.StreamID || (streams[i][idxs[i]].StreamID == small.StreamID && streams[i][idxs[i]].Timestamp < small.Timestamp) {
+			var check bool
+			if newest {
+				check = streams[i][idxs[i]].Timestamp > small.Timestamp || (streams[i][idxs[i]].Timestamp == small.Timestamp && streams[i][idxs[i]].StreamID < small.StreamID)
+			} else {
+				check = streams[i][idxs[i]].StreamID < small.StreamID || (streams[i][idxs[i]].StreamID == small.StreamID && streams[i][idxs[i]].Timestamp < small.Timestamp)
+			}
+			if sIdx == -1 || check {
 				small = streams[i][idxs[i]]
 				sIdx = i
 			}

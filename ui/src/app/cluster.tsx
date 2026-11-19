@@ -248,7 +248,7 @@ export function ClusterTab({ c }: { c: Cluster }) {
   );
 }
 
-function bytes(n: number) {
+export function bytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;

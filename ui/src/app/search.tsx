@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { QueryResult, Row } from "./api/query/route";
+import { Histogram, QueryPlan } from "./charts";
 
 const RANGES = [
   ["5m", "Last 5 minutes"],
@@ -49,7 +50,7 @@ async function fetchQuery(q: Query): Promise<QueryResult> {
   const res = await fetch("/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(q),
+    body: JSON.stringify({ ...q, tz: -new Date().getTimezoneOffset() }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -99,9 +100,10 @@ export function Search() {
   result?.rows.forEach((r) => r.fields.forEach((f) => seenFields.add(f.Name)));
   const msgMatch = ran.column === "_msg" ? tokens(ran.words) : new Set<string>();
 
+  // TODO(#10): one query box using the syntax from ParseFilters instead of words + field.
+  // TODO(#14): a live-tail toggle.
   return (
     <div>
-
       <form
         className="mb-4 grid gap-2 sm:grid-cols-[1fr_9rem_10rem_6rem_auto]"
         onSubmit={(e) => {
@@ -167,7 +169,7 @@ export function Search() {
       )}
 
       {result && (
-        <>
+        <div className={loading ? "opacity-50 transition-opacity" : undefined}>
           <p className="mb-2 text-xs text-zinc-500">
             {result.matched.toLocaleString()} matched
             {result.matched > result.rows.length && `, showing newest ${result.rows.length}`} · {result.nodesQueried}{" "}
@@ -178,6 +180,9 @@ export function Search() {
               </span>
             )}
           </p>
+
+          {result.matched > 0 && <Histogram hist={result.hist} />}
+          {result.stats && <QueryPlan stats={result.stats} />}
 
           {result.rows.length === 0 ? (
             <p className="rounded-md border border-dashed border-zinc-300 px-3 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
@@ -190,7 +195,7 @@ export function Search() {
               ))}
             </ul>
           )}
-        </>
+        </div>
       )}
     </div>
   );

@@ -108,6 +108,12 @@ func MarshalQuery(dst []byte, q *storage.Query) []byte {
 	for _, filter := range q.Filters {
 		dst = storage.MarshalString(dst, filter.Column)
 		dst = storage.MarshalString(dst, filter.Token)
+		dst = storage.MarshalVarUint64(dst, uint64(filter.Kind))
+		var not uint64
+		if filter.Not {
+			not = 1
+		}
+		dst = storage.MarshalVarUint64(dst, not)
 	}
 	dst = storage.MarshalVarUint64(dst, uint64(q.Limit))
 	var partial uint64
@@ -115,12 +121,18 @@ func MarshalQuery(dst []byte, q *storage.Query) []byte {
 		partial = 1
 	}
 	dst = storage.MarshalVarUint64(dst, partial)
+	var newest uint64
+	if q.Newest {
+		newest = 1
+	}
+	dst = storage.MarshalVarUint64(dst, newest)
 	return dst
 }
 
 func UnmarshalQuery(q *storage.Query, src []byte) ([]byte, error) {
 	var u uint64
 	var stId uint64
+	var kind, not uint64
 	var c string
 	var t string
 	var rest []byte
@@ -165,7 +177,15 @@ func UnmarshalQuery(q *storage.Query, src []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		q.Filters = append(q.Filters, storage.Filter{Column: c, Token: t})
+		kind, rest, err = storage.UnmarshalVarUint64(rest)
+		if err != nil {
+			return nil, err
+		}
+		not, rest, err = storage.UnmarshalVarUint64(rest)
+		if err != nil {
+			return nil, err
+		}
+		q.Filters = append(q.Filters, storage.Filter{Column: c, Token: t, Kind: storage.FilterKind(kind), Not: not == 1})
 	}
 	u, rest, err = storage.UnmarshalVarUint64(rest)
 	if err != nil {
@@ -177,6 +197,11 @@ func UnmarshalQuery(q *storage.Query, src []byte) ([]byte, error) {
 		return nil, err
 	}
 	q.AllowPartialResponse = u == 1
+	u, rest, err = storage.UnmarshalVarUint64(rest)
+	if err != nil {
+		return nil, err
+	}
+	q.Newest = u == 1
 	return rest, nil
 }
 

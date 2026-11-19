@@ -3,7 +3,9 @@
 package storage
 
 import (
+	"cmp"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -76,11 +78,40 @@ func MustOpenStorage(path string, cfg *Config) *Storage {
 		shards: shards,
 		stop:   make(chan struct{}),
 	}
+	if cfg.RetentionDays > 0 {
+		s.MustDropPartitionsBefore(s.retentionCutoffDay())
+		s.wg.Add(1)
+		go s.retentionLoop()
+	}
 	if cfg.FlushInterval > 0 {
 		s.wg.Add(1)
 		go s.flushLoop()
 	}
 	return s
+}
+
+// retentionCutoffDay is the oldest day that is kept: today plus the RetentionDays-1 days
+// before it. With retention off it is the lowest value, so no day is ever older than it.
+func (s *Storage) retentionCutoffDay() int64 {
+	if s.cfg.RetentionDays <= 0 {
+		return math.MinInt64
+	}
+
+	return dayForTimestamp(time.Now().UnixNano()) - int64(s.cfg.RetentionDays) + 1
+}
+
+func (s *Storage) retentionLoop() {
+	defer s.wg.Done()
+	tick := time.NewTicker(1 * time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+			s.MustDropPartitionsBefore(s.retentionCutoffDay())
+		}
+	}
 }
 
 func (s *Storage) flushLoop() {
@@ -119,6 +150,7 @@ func (s *Storage) MustAddRows(rows []Row) {
 	for _, row := range rows {
 		Metrics.LogicalBytesIngested.Add(int64(row.LogicalSizeBytes()))
 	}
+	cutOff := s.retentionCutoffDay()
 	i := 0
 	for i < len(rows) {
 		j := i + 1
@@ -129,6 +161,10 @@ func (s *Storage) MustAddRows(rows []Row) {
 
 		shard := s.shardForStreamID(rows[i].StreamID)
 		day := dayForTimestamp(rows[i].Timestamp)
+		if day < cutOff {
+			i = j
+			continue
+		}
 
 		s.shards[shard].mu.Lock()
 		_, exist := s.shards[shard].partitions[day]
@@ -181,6 +217,11 @@ func (s *Storage) Search(q *Query) ([]Row, *SearchStats) {
 	}
 
 	SortRows(rows)
+	if q.Newest {
+		slices.SortStableFunc(rows, func(a, b Row) int {
+			return cmp.Compare(b.Timestamp, a.Timestamp)
+		})
+	}
 	rows = q.ApplyLimit(rows)
 	return rows, ss
 }
