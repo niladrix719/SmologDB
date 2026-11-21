@@ -3,6 +3,7 @@ package netinsert
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -49,6 +50,7 @@ type Storage struct {
 	flushInterval       time.Duration
 	nodeDisableDuration time.Duration
 	disableCompression  bool
+	rowsRejected        atomic.Int64
 }
 
 type storageNode struct {
@@ -191,6 +193,12 @@ func (sn *storageNode) flush(s *Storage, rows []storage.Row) {
 	}
 	rowsToSend := internalapi.MarshalRowBatch(nil, rows)
 	err := sn.sendInsertRequest(rowsToSend)
+	var rej *errRejected
+	if errors.As(err, rej) {
+		s.rowsRejected.Add(int64(len(rows)))
+		log.Printf("%s rejected a batch of %d rows, dropping it: %v", sn.addr, len(rows), err)
+		return
+	}
 	if err != nil {
 		send := s.sendToAnyNode(rowsToSend, len(rows))
 		if !send {
@@ -224,6 +232,10 @@ func (sn *storageNode) flushLoop(s *Storage) {
 	}
 }
 
+type errRejected struct{ msg string }
+
+func (e *errRejected) Error() string { return e.msg }
+
 func (sn *storageNode) sendInsertRequest(data []byte) error {
 	var err error
 	var resp *http.Response
@@ -240,7 +252,11 @@ func (sn *storageNode) sendInsertRequest(data []byte) error {
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("insert failed: status %d: %s", resp.StatusCode, b)
+		errMsg := fmt.Sprintf("insert failed: status %d: %s", resp.StatusCode, b)
+		if resp.StatusCode == http.StatusBadRequest {
+			return &errRejected{msg: errMsg}
+		}
+		return errors.New(errMsg)
 	}
 	return nil
 }
@@ -260,6 +276,10 @@ func (s *Storage) sendToAnyNode(data []byte, rowsCount int) bool {
 		}
 	}
 	return false
+}
+
+func (s *Storage) RowsRejected() int64 {
+	return s.rowsRejected.Load()
 }
 
 func (sn *storageNode) setDisabledTemporarily(d time.Duration) {

@@ -142,7 +142,7 @@ func (sn *storageNode) runQuery(q *storage.Query) ([]storage.Row, *storage.Searc
 	defer resp.Body.Close()
 	b, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, &errUnavailable{err: err}
 	}
 	if resp.StatusCode/100 != 2 {
 		return nil, nil, fmt.Errorf("search failed statuscode %d:%s", resp.StatusCode, b)
