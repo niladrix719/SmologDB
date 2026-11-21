@@ -3,6 +3,7 @@ package netselect
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ type Config struct {
 	Addrs []string
 
 	DisableCompression bool
+
+	QueryTimeout time.Duration
 }
 
 type Storage struct {
@@ -26,16 +29,22 @@ type Storage struct {
 }
 
 type storageNode struct {
-	addr   string
-	client *http.Client
+	addr    string
+	client  *http.Client
+	timeout time.Duration
 }
 
 func NewStorage(cfg *Config) *Storage {
 	nodes := make([]*storageNode, len(cfg.Addrs))
+	timeout := cfg.QueryTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	for i, addr := range cfg.Addrs {
 		nodes[i] = &storageNode{
-			addr:   addr,
-			client: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
+			addr:    addr,
+			client:  &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
+			timeout: timeout,
 		}
 	}
 	return &Storage{
@@ -112,14 +121,21 @@ func (s *Storage) MustForceFlush() {
 
 func (sn *storageNode) runQuery(q *storage.Query) ([]storage.Row, *storage.SearchStats, error) {
 	var resp *http.Response
+	var req *http.Request
 	var err error
 	var b []byte
 	var rows []storage.Row
 	var ss *storage.SearchStats
+	ctx, cancel := context.WithTimeout(context.Background(), sn.timeout)
+	defer cancel()
 	queryToSend := internalapi.MarshalQuery(nil, q)
-	resp, err = sn.client.Post(fmt.Sprintf("http://%s%s?version=%s", sn.addr, internalapi.SelectPath, internalapi.ProtocolVersion),
-		"application/octet-stream",
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://%s%s?version=%s", sn.addr, internalapi.SelectPath, internalapi.ProtocolVersion),
 		bytes.NewReader(queryToSend))
+	if err != nil {
+		return nil, nil, &errUnavailable{err: err}
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err = sn.client.Do(req)
 	if err != nil {
 		return nil, nil, &errUnavailable{err: err}
 	}
