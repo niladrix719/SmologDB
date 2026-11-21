@@ -194,7 +194,7 @@ func (sn *storageNode) flush(s *Storage, rows []storage.Row) {
 	rowsToSend := internalapi.MarshalRowBatch(nil, rows)
 	err := sn.sendInsertRequest(rowsToSend)
 	var rej *errRejected
-	if errors.As(err, rej) {
+	if errors.As(err, &rej) {
 		s.rowsRejected.Add(int64(len(rows)))
 		log.Printf("%s rejected a batch of %d rows, dropping it: %v", sn.addr, len(rows), err)
 		return
@@ -267,6 +267,12 @@ func (s *Storage) sendToAnyNode(data []byte, rowsCount int) bool {
 		idx := (start + i) % len(s.nodes)
 		if s.nodes[idx].disabledUntil.Load() < time.Now().UnixNano() {
 			err := s.nodes[idx].sendInsertRequest(data)
+			var rej *errRejected
+			if errors.As(err, &rej) {
+				s.rowsRejected.Add(int64(rowsCount))
+				log.Printf("%s rejected a rerouted batch of %d rows, dropping it: %v", s.nodes[idx].addr, rowsCount, err)
+				return true
+			}
 			if err != nil {
 				s.nodes[idx].disabledUntil.Store(time.Now().Add(s.nodeDisableDuration).UnixNano())
 				continue
