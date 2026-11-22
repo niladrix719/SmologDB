@@ -1,4 +1,4 @@
-import { guard, loadConfig } from "@/lib/cluster";
+import { guard } from "@/lib/guard";
 
 export type Field = { Name: string; Value: string };
 export type Row = { ts: string; ms: number; fields: Field[] };
@@ -29,7 +29,13 @@ export type QueryResult = {
   nodesQueried: number | null;
   nodesFailed: number;
   tookMs: number;
+  router: string;
 };
+
+// What the UI gets instead when a search fails. kind says whose fault it is: the query's (a typo
+// in the search box), or the router's (not running, or answering with an error).
+export type QueryError = { error: string; kind?: "bad-query" | "router-down" | "router-error"; router?: string };
+const fail = (status: number, body: QueryError) => Response.json(body, { status });
 
 // The range picker's values as the router's `since`, a Go duration. Go has no "d", and
 // "all" sends no since at all.
@@ -65,7 +71,7 @@ function parseRows(ndjson: string): Row[] {
 export async function POST(request: Request) {
   const denied = guard(request, true);
   if (denied) return denied;
-  const ROUTER = process.env.SMOLOGDB_ROUTER ?? `http://${loadConfig().router.listen}`;
+  const ROUTER = process.env.SMOLOGDB_ROUTER ?? "http://127.0.0.1:9000";
   const input = await request.json().catch(() => null);
   if (!input || typeof input !== "object") {
     return Response.json({ error: "bad request body" }, { status: 400 });
@@ -86,14 +92,14 @@ export async function POST(request: Request) {
   try {
     rowsRes = await fetch(url("/select", { limit: String(limit) }), { signal: AbortSignal.timeout(30_000) });
   } catch (err) {
-    return Response.json({ error: `can't reach the router at ${ROUTER}: ${(err as Error).message}` }, { status: 502 });
+    return fail(502, { error: `can't reach the router at ${ROUTER}: ${(err as Error).message}`, kind: "router-down", router: ROUTER });
   }
   if (!rowsRes.ok) {
     const text = (await rowsRes.text()).trim();
     // A 400 is the query's fault (say, an unclosed quote); anything else is the cluster's.
     return rowsRes.status === 400
-      ? Response.json({ error: text }, { status: 400 })
-      : Response.json({ error: `router answered ${rowsRes.status}: ${text}` }, { status: 502 });
+      ? fail(400, { error: text, kind: "bad-query" })
+      : fail(502, { error: `router answered ${rowsRes.status}: ${text}`, kind: "router-error", router: ROUTER });
   }
   const rows = parseRows(await rowsRes.text());
 
@@ -115,6 +121,7 @@ export async function POST(request: Request) {
     nodesQueried: hits?.stats?.NodesQueried ?? null,
     nodesFailed: hits?.stats?.NodesFailed ?? (Number(rowsRes.headers.get("x-nodes-failed")) || 0),
     tookMs: Date.now() - started,
+    router: ROUTER,
   };
   return Response.json(result);
 }

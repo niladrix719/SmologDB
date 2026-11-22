@@ -1,32 +1,72 @@
 @import "tailwindcss";
 
+/* Colors by role, not by hue. Every text color keeps at least 4.5:1 contrast on canvas,
+   surface and raised; faint and the *-line colors are for borders and marks only. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --canvas: #ffffff;
+  --surface: #f7f7f8;
+  --raised: #eeeef1;
+  --line: #e2e2e7;
+  --fg: #18181b;
+  --muted: #595961;
+  --faint: #a1a1aa;
+  --accent: #2563b0;
+  --mark: #fde68a;
+  --error: #c03030;
+  --error-line: #e05252;
+  --warn: #8a5200;
+  --warn-line: #e0a100;
+  /* Chart colors, checked for colorblind separation against this background. */
   --chart-1: #2a78d6;
   --chart-2: #eb6834;
   --chart-3: #1baf7a;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #0c0c0e;
+    --surface: #131316;
+    --raised: #1c1c20;
+    --line: #2a2a30;
+    --fg: #ececf0;
+    --muted: #a3a3ad;
+    --faint: #55555e;
+    --accent: #5b9cf0;
+    --mark: rgba(234, 179, 8, 0.35);
+    --error: #f27b7b;
+    --error-line: #e05252;
+    --warn: #f0b440;
+    --warn-line: #c98500;
     --chart-1: #3987e5;
     --chart-2: #d95926;
     --chart-3: #199e70;
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-mark: var(--mark);
+  --color-error: var(--error);
+  --color-error-line: var(--error-line);
+  --color-warn: var(--warn);
+  --color-warn-line: var(--warn-line);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--canvas);
+  color: var(--fg);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
