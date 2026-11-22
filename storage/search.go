@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -97,9 +98,87 @@ func (q *Query) Columns() []string {
 	return cols
 }
 
-// ParseFilters turns a search-box string like `ERROR -debug service:checkout "disk full"`
-// into filters on defaultColumn and named columns.
-// TODO(#9): not implemented yet; see TODO.md for the syntax.
 func ParseFilters(s, defaultColumn string) ([]Filter, error) {
-	return nil, errors.New("query syntax not implemented yet")
+	var filters []Filter
+	var err error
+	i := 0
+	for {
+		for i < len(s) && s[i] == ' ' {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		not := false
+		if s[i] == '-' {
+			i++
+			not = true
+		}
+		colStart := i
+		colEnd := colStart
+		var columnName string
+		var kind FilterKind
+		var token string
+		for colEnd < len(s) && s[colEnd] != ' ' && s[colEnd] != '"' && s[colEnd] != '*' {
+			if s[colEnd] == ':' {
+				columnName = s[colStart:colEnd]
+				i = colEnd + 1
+				if i < len(s) && s[i] == '=' {
+					kind = MatchExact
+					i++
+				}
+				break
+			}
+			colEnd++
+		}
+		if columnName == "" {
+			columnName = defaultColumn
+		}
+		if i >= len(s) || s[i] == ' ' {
+			return nil, fmt.Errorf("missing value after %q", columnName)
+		}
+
+		if s[i] == '"' {
+			tokStart := i + 1
+			tokEnd := tokStart
+			for tokEnd < len(s) && s[tokEnd] != '"' {
+				tokEnd++
+			}
+			if tokEnd == len(s) {
+				return nil, fmt.Errorf("unclosed quote")
+			}
+			token = s[tokStart:tokEnd]
+			i = tokEnd + 1
+			if kind != MatchExact {
+				kind = MatchPhrase
+			}
+		} else {
+			tokStart := i
+			tokEnd := tokStart
+			for tokEnd < len(s) && s[tokEnd] != ' ' {
+				tokEnd++
+			}
+			token = s[tokStart:tokEnd]
+			i = tokEnd
+			if kind != MatchExact && strings.HasSuffix(token, "*") {
+				token = token[:len(token)-1]
+				kind = MatchPrefix
+			}
+		}
+		words := Tokenize(nil, token)
+		if token == "" || (len(words) == 0 && kind != MatchExact) {
+			return nil, fmt.Errorf("nothing to search for in %q", token)
+		}
+		tokens := []string{token}
+		if kind == MatchWord {
+			tokens = words
+		}
+		for _, tok := range tokens {
+			filters = append(filters, Filter{Column: columnName, Token: tok, Kind: kind, Not: not})
+		}
+		if len(filters) > 999 {
+			return nil, errors.New("too many terms")
+		}
+	}
+	return filters, err
 }

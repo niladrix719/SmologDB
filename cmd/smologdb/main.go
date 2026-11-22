@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -210,7 +212,50 @@ func runRouter(nodeAddrs []string, listenAddr string) {
 // TODO(#10): not implemented yet. See TODO.md for the parameters and the output format.
 func newSelectHandler(s storage.LogStorage) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "/select is not implemented yet", http.StatusNotImplemented)
+		if r.Method != http.MethodGet {
+			http.Error(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		params := r.URL.Query()
+		query := params.Get("q")
+
+		filters, err := storage.ParseFilters(query, "_msg")
+		if err != nil {
+			http.Error(w, "bad q: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		limit := 100
+		if v := params.Get("limit"); v != "" {
+			if limit, err = strconv.Atoi(v); err != nil {
+				http.Error(w, "bad limit", http.StatusBadRequest)
+				return
+			}
+			limit = min(limit, 10000)
+		}
+		q := &storage.Query{MaxTimestamp: math.MaxInt64, Filters: filters, Limit: limit, Newest: true, AllowPartialResponse: true}
+		var d time.Duration
+		if v := params.Get("since"); v != "" {
+			if d, err = time.ParseDuration(v); err != nil {
+				http.Error(w, "bad since", http.StatusBadRequest)
+				return
+			}
+			q.MinTimestamp = time.Now().Add(-d).UnixNano()
+		}
+
+		rows, ss := s.Search(q)
+		w.Header().Set("content-type", "application/x-ndjson")
+		if ss != nil {
+			w.Header().Set("X-Nodes-Failed", strconv.Itoa(ss.NodesFailed))
+		}
+		enc := json.NewEncoder(w)
+		for _, row := range rows {
+			m := make(map[string]string, len(row.Fields)+1)
+			for _, f := range row.Fields {
+				m[f.Name] = f.Value
+			}
+			m["_time"] = time.Unix(0, row.Timestamp).UTC().Format(time.RFC3339Nano)
+			enc.Encode(m)
+		}
 	})
 }
 
