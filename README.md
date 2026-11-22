@@ -75,15 +75,24 @@ Nested objects are flattened to dotted names (`{"http":{"status":500}}` becomes 
 COL=service ./scripts/query.sh checkout    # match a word in another field
 ```
 
-Under the hood that is a JSON query sent to the router:
+Or ask the router directly. `/select` returns the newest matching rows, one JSON object per line:
 
 ```sh
-curl -X GET -d '{"MinTimestamp":0,"MaxTimestamp":9000000000000000000,
-                 "Filters":[{"Column":"_msg","Token":"ERROR"}],"Limit":20}' \
-  http://127.0.0.1:9000/
+curl 'http://127.0.0.1:9000/select?q=ERROR%20-debug&since=15m&limit=20'
 ```
 
-Filters match whole words, case-sensitively, and are ANDed together. That is the entire query language.
+`q` is a list of terms, and a row must match all of them:
+
+| term | matches |
+|---|---|
+| `ERROR` | the word `ERROR` in the message (`_msg`) |
+| `level:error` | the word `error` in the `level` field |
+| `level:=error` | `level` is exactly `error` |
+| `"disk full"` | those words next to each other, in order |
+| `pay*` | a word that starts with `pay` |
+| `-debug` | rows without the word `debug`; `-` works in front of any term |
+
+Words are case-sensitive and punctuation is ignored, so `hello!` searches for the word `hello`. `since` is a Go duration (`15m`, `24h`); leave it out to search all time. `scripts/query.sh` uses the older JSON query on `GET /`, which still works.
 
 ### The UI
 
@@ -91,7 +100,7 @@ Filters match whole words, case-sensitively, and are ANDed together. That is the
 make ui        # then open http://127.0.0.1:3000
 ```
 
-One page with three tabs. **Cluster** starts and stops storage nodes and the router, adds or removes nodes, and shows each process's output. **Agent** sets which log files to collect and shows how far into each one it has read, and can run a fake log generator. **Search** is the query box. Configuration is saved to `cluster-data/cluster.json`, and every node's data lives under `cluster-data/` too. The UI only accepts requests from this machine, since it can start processes and read files.
+One page with three tabs. **Cluster** starts and stops storage nodes and the router, adds or removes nodes, and shows each process's output. **Agent** sets which log files to collect and shows how far into each one it has read, and can run a fake log generator. **Search** takes the query syntax above and has a **Live** toggle that refreshes every 2 seconds. The histogram of matches over time, the total and the query stats need the router's `/hits` endpoint, which isn't written yet (item 14 in `TODO.md`); until then the page shows the rows without them. Processes started from the UI write their output to `cluster-data/logs/` and are listed in `cluster-data/procs.json`, so if the UI crashes they keep running and it re-attaches to them on its next start. Configuration is saved to `cluster-data/cluster.json`, and every node's data lives under `cluster-data/` too. The UI only accepts requests from this machine, since it can start processes and read files.
 
 ## Numbers
 
@@ -111,7 +120,7 @@ From the test suite on an M2 Mac mini (`go test -v` prints them).
 
 - **No write-ahead log.** Rows in a storage node's memory (up to a second's worth) are lost if the process is killed with `kill -9`. A clean shutdown flushes them. `make crash` kills the process 200 times mid-write and checks that it always comes back with no corruption and nothing missing that was already on disk.
 - **At-least-once, not exactly-once.** Retries can store a row twice. There is no dedup.
-- **No real query language.** Time range, AND of word filters, limit. No regex, no aggregation.
+- **A small query language.** Words, phrases, prefixes, exact values, fields and negation, all ANDed. No OR, no regex, no aggregation.
 - **No replication inside the cluster, no consensus, no rebalancing.** The node list is a flag. For two copies, point the agent at two clusters.
 - **The merge policy is the simplest one that works.** Eight parts become one, always the whole partition. With a flush every second the current day gets rewritten every eight seconds, which is fine for a demo and gets more expensive as the day fills up. Merging parts of similar size would fix it.
 - **The tailer follows files by path and notices truncation by size.** If a file is rotated and grows past the old offset before the next poll, it misses that.

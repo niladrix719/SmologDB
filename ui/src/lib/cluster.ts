@@ -213,7 +213,7 @@ function run(id: string, cmd: string, args: string[], toFile = true): Proc {
   if (toFile) {
     fs.mkdirSync(LOGS, { recursive: true });
     log = path.join(LOGS, `${id}.log`);
-    const fd = fs.openSync(log, "w");
+    const fd = fs.openSync(/*turbopackIgnore: true*/ log, "w");
     stdio = ["ignore", fd, fd];
   }
   const child = spawn(cmd, args, { cwd: REPO, stdio });

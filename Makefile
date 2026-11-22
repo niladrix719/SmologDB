@@ -1,4 +1,4 @@
-.PHONY: help build demo ui test unit integration race crash chaos vet clean
+.PHONY: help build demo ui test unit integration race crash chaos vet todo clean
 
 help:
 	@echo "make build        build ./smologdb"
@@ -10,6 +10,7 @@ help:
 	@echo "make race         everything under the race detector"
 	@echo "make crash        kill -9 the storage 200 times and check recovery"
 	@echo "make chaos        kill storage nodes during ingest and check what survives"
+	@echo "make todo         tests for unfinished work in TODO.md (they fail until it is done)"
 
 build:
 	go build -o smologdb ./cmd/smologdb
@@ -39,6 +40,14 @@ chaos:
 
 vet:
 	go vet ./...
+
+# Runs only the tests in files that still start with //go:build todo.
+TODO_FILES = $(shell grep -rl --exclude-dir=node_modules --exclude-dir=.git --include='*_test.go' '^//go:build todo' .)
+TODO_TESTS = $(shell grep -ho '^func \(Test\|Fuzz\)[A-Za-z0-9_]*' $(TODO_FILES) | sed 's/^func //' | paste -sd'|' -)
+
+todo:
+	@if [ -z "$(TODO_FILES)" ]; then echo "nothing left in TODO.md"; else \
+		go test -tags todo -count=1 -run '^($(TODO_TESTS))$$' $(sort $(dir $(TODO_FILES))); fi
 
 clean:
 	rm -rf smologdb demo-data
