@@ -8,6 +8,8 @@ export type ClusterConfig = {
 
 export type ProcStatus = {
   running: boolean;
+  // Started before the UI's last restart and picked up again from cluster-data/procs.json.
+  adopted?: boolean;
   pid?: number;
   startedAt?: number;
   uptimeSec?: number;

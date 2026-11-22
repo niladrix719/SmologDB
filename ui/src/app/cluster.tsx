@@ -69,7 +69,7 @@ function Status({ p }: { p?: ProcStatus }) {
   if (p?.running) {
     color = "bg-emerald-500";
     const mins = Math.floor((p.uptimeSec ?? 0) / 60);
-    text = `running · pid ${p.pid} · ${mins < 1 ? "just now" : `${mins}m`}`;
+    text = `running · pid ${p.pid} · ${mins < 1 ? "just now" : `${mins}m`}${p.adopted ? " · re-attached" : ""}`;
   } else if (p?.exitCode != null && p.exitCode !== 0) {
     color = "bg-red-500";
     text = `exited ${p.exitCode}`;

@@ -185,6 +185,7 @@ func runRouter(nodeAddrs []string, listenAddr string) {
 	mux := http.NewServeMux()
 	mux.Handle("/internal/", internalapi.NewStorageNodeHandler(s))
 	mux.Handle("/select", newSelectHandler(s))
+	mux.Handle("/hits", newHitsHandler(s))
 	mux.Handle("/", handler)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -256,6 +257,79 @@ func newSelectHandler(s storage.LogStorage) http.Handler {
 			m["_time"] = time.Unix(0, row.Timestamp).UTC().Format(time.RFC3339Nano)
 			enc.Encode(m)
 		}
+	})
+}
+
+func newHitsHandler(s storage.LogStorage) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		params := r.URL.Query()
+		query := params.Get("q")
+
+		filters, err := storage.ParseFilters(query, "_msg")
+		if err != nil {
+			http.Error(w, "bad q: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		q := &storage.Query{MaxTimestamp: math.MaxInt64, Filters: filters, AllowPartialResponse: true}
+		var since, offset time.Duration
+		if v := params.Get("since"); v != "" {
+			if since, err = time.ParseDuration(v); err != nil || since <= 0 {
+				http.Error(w, "bad since", http.StatusBadRequest)
+				return
+			}
+		}
+		if v := params.Get("offset"); v != "" {
+			if offset, err = time.ParseDuration(v); err != nil || offset < -14*time.Hour || offset > 14*time.Hour {
+				http.Error(w, "bad offset", http.StatusBadRequest)
+				return
+			}
+		}
+		now := time.Now().UnixNano()
+		if since > 0 {
+			q.MinTimestamp = now - int64(since)
+		}
+
+		rows, ss := s.Search(q)
+		from, to := now, now
+		if since > 0 {
+			from = now - int64(since)
+		}
+		for _, row := range rows {
+			if since == 0 {
+				from = min(from, row.Timestamp)
+			}
+			to = max(to, row.Timestamp)
+		}
+
+		span := max(to-from, int64(time.Second))
+		step := (span + 60*int64(time.Second) - 1) / (60 * int64(time.Second)) * int64(time.Second)
+		for _, s := range []time.Duration{time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second,
+			time.Minute, 3 * time.Minute, 5 * time.Minute, 10 * time.Minute, 30 * time.Minute, time.Hour,
+			3 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour} {
+			if span <= 60*int64(s) {
+				step = int64(s)
+				break
+			}
+		}
+
+		off := int64(offset)
+		start := (from+off)/step*step - off
+		counts := make([]int, (to-start)/step+1)
+		for _, row := range rows {
+			counts[(row.Timestamp-start)/step]++
+		}
+
+		w.Header().Set("content-type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Start  int64                `json:"start"`
+			Step   int64                `json:"step"`
+			Counts []int                `json:"counts"`
+			Stats  *storage.SearchStats `json:"stats"`
+		}{Start: start / int64(time.Millisecond), Step: step / int64(time.Millisecond), Counts: counts, Stats: ss})
 	})
 }
 

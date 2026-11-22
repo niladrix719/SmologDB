@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -9,6 +9,10 @@ const BIN = process.env.SMOLOGDB_BIN ?? path.join(REPO, "smologdb");
 const DATA = path.join(REPO, "cluster-data");
 const CONFIG_PATH = path.join(DATA, "cluster.json");
 const SAMPLE_LOG = path.join(DATA, "sample.log");
+// Each process writes its output here, and running ones are listed in PIDS_PATH, so they
+// outlive this server and are picked up again when it restarts.
+const LOGS = path.join(DATA, "logs");
+const PIDS_PATH = path.join(DATA, "procs.json");
 const OUTPUT_LINES = 200;
 
 const DEFAULTS: ClusterConfig = {
@@ -22,18 +26,71 @@ const DEFAULTS: ClusterConfig = {
 
 type Proc = {
   child: ChildProcess | null;
+  // Started by an earlier run of this server and still alive: there's no child handle, only the pid.
+  adopted?: boolean;
   pid?: number;
   startedAt?: number;
   exitCode?: number | null;
-  output: string[];
+  output: string[]; // only for `go build`; the others read their log file
+  log?: string;
+  cmd: string;
   args: string[];
 };
 
-// Survives module reloads in `next dev`, so running processes aren't forgotten.
-// TODO(#14): but not a restart of the dev server: the nodes keep running untracked. Save the
-// pids under cluster-data/ and re-attach to (or stop) the ones still alive on startup.
+type SavedProc = { pid: number; startedAt: number; cmd: string; args: string[]; log?: string };
+
+function alive(pid?: number): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function running(p?: Proc): boolean {
+  return !!p && (!!p.child || (!!p.adopted && alive(p.pid)));
+}
+
+function commandLine(pid: number): string {
+  try {
+    return execFileSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+// Processes an earlier run of this server started and that are still running, because it crashed
+// or was killed: they show as running and can be stopped. A pid only counts if its command line
+// is still exactly ours, so a pid the system has since given to something else is never touched.
+function adopt(): Map<string, Proc> {
+  const found = new Map<string, Proc>();
+  let saved: Record<string, SavedProc> = {};
+  try {
+    saved = JSON.parse(fs.readFileSync(PIDS_PATH, "utf8"));
+  } catch {
+    return found;
+  }
+  for (const [id, s] of Object.entries(saved)) {
+    if (!alive(s.pid) || commandLine(s.pid) !== [s.cmd, ...s.args].join(" ")) continue;
+    found.set(id, { child: null, adopted: true, pid: s.pid, startedAt: s.startedAt, exitCode: null, output: [], log: s.log, cmd: s.cmd, args: s.args });
+  }
+  return found;
+}
+
+// Survives module reloads in `next dev`; adopt() covers a restart of the server itself.
 const g = globalThis as unknown as { __smologdbProcs?: Map<string, Proc> };
-const procs = (g.__smologdbProcs ??= new Map<string, Proc>());
+const procs = (g.__smologdbProcs ??= adopt());
+
+function savePids() {
+  const out: Record<string, SavedProc> = {};
+  for (const [id, p] of procs) {
+    if (p.log && p.pid && running(p)) out[id] = { pid: p.pid, startedAt: p.startedAt ?? 0, cmd: p.cmd, args: p.args, log: p.log };
+  }
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(PIDS_PATH, JSON.stringify(out, null, 2) + "\n");
+}
 
 const abs = (p: string) => (path.isAbsolute(p) ? p : path.join(REPO, p));
 
@@ -75,7 +132,7 @@ function validate(input: unknown): ClusterConfig {
 export function saveConfig(input: unknown) {
   const cfg = validate(input);
   for (const [id, p] of procs) {
-    if (p.child && id.startsWith("storage-") && !cfg.storage.some((n) => n.id === id)) {
+    if (running(p) && id.startsWith("storage-") && !cfg.storage.some((n) => n.id === id)) {
       throw new Error(`stop ${id} before removing it`);
     }
   }
@@ -123,40 +180,85 @@ function record(p: Proc, chunk: Buffer | string) {
   if (p.output.length > OUTPUT_LINES) p.output.splice(0, p.output.length - OUTPUT_LINES);
 }
 
-function run(id: string, cmd: string, args: string[]): Proc {
-  const child = spawn(cmd, args, { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
-  const p: Proc = { child, pid: child.pid, startedAt: Date.now(), exitCode: null, output: [], args };
+// Adds a line of our own (like "exited") to what the process wrote.
+function note(p: Proc, line: string) {
+  if (!p.log) return record(p, line);
+  try {
+    fs.appendFileSync(p.log, line + "\n");
+  } catch {}
+}
+
+function lastLines(file: string, n: number): string[] {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(size, 64 * 1024));
+      fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+      return buf.toString("utf8").split("\n").filter((l) => l.trim()).slice(-n);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return [];
+  }
+}
+
+// toFile: the process writes to cluster-data/logs/<id>.log rather than a pipe to this server.
+// A pipe dies with the server, and a Go program exits on SIGPIPE the next time it logs, so a
+// node started that way would be killed by a UI restart.
+function run(id: string, cmd: string, args: string[], toFile = true): Proc {
+  let log: string | undefined;
+  let stdio: ["ignore", "pipe" | number, "pipe" | number] = ["ignore", "pipe", "pipe"];
+  if (toFile) {
+    fs.mkdirSync(LOGS, { recursive: true });
+    log = path.join(LOGS, `${id}.log`);
+    const fd = fs.openSync(log, "w");
+    stdio = ["ignore", fd, fd];
+  }
+  const child = spawn(cmd, args, { cwd: REPO, stdio });
+  if (typeof stdio[1] === "number") fs.closeSync(stdio[1]); // the child has its own copy
+  const p: Proc = { child, pid: child.pid, startedAt: Date.now(), exitCode: null, output: [], log, cmd, args };
   procs.set(id, p);
   child.stdout?.on("data", (c) => record(p, c));
   child.stderr?.on("data", (c) => record(p, c));
   child.on("error", (err) => {
-    record(p, `failed to start: ${err.message}`);
+    note(p, `failed to start: ${err.message}`);
     p.child = null;
     p.exitCode = -1;
+    savePids();
   });
   child.on("exit", (code, signal) => {
     p.child = null;
     p.exitCode = code ?? -1;
-    record(p, `exited (${signal ?? code})`);
+    note(p, `exited (${signal ?? code})`);
+    savePids();
   });
+  if (log) savePids();
   return p;
 }
 
 function exited(p: Proc): Promise<void> {
   return new Promise((resolve) => {
-    if (!p.child) return resolve();
-    p.child.once("exit", () => resolve());
+    if (p.child) return void p.child.once("exit", () => resolve());
+    // An adopted process isn't our child, so there's no exit event: watch the pid instead.
+    const timer = setInterval(() => {
+      if (!alive(p.pid)) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
   });
 }
 
 export async function build() {
-  const p = run("build", "go", ["build", "-o", BIN, "./cmd/smologdb"]);
+  const p = run("build", "go", ["build", "-o", BIN, "./cmd/smologdb"], false);
   await exited(p);
   if (p.exitCode !== 0) throw new Error(`go build failed: ${p.output.slice(-3).join(" ")}`);
 }
 
 export async function start(id: string) {
-  if (procs.get(id)?.child) return;
+  if (running(procs.get(id))) return;
   const cfg = loadConfig();
   const s = spec(id, cfg);
   if (s.listen && (await isOpen(s.listen))) {
@@ -176,13 +278,23 @@ export async function start(id: string) {
 
 export async function stop(id: string) {
   const p = procs.get(id);
-  if (!p?.child) return;
-  const child = p.child;
-  child.kill("SIGTERM");
+  const pid = p?.pid;
+  if (!p || !pid || !running(p)) return;
+  const kill = (signal: NodeJS.Signals) => {
+    try {
+      process.kill(pid, signal);
+    } catch {}
+  };
+  kill("SIGTERM");
   // smologdb flushes on SIGTERM; only force it if that hangs.
-  const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+  const timer = setTimeout(() => kill("SIGKILL"), 10_000);
   await exited(p);
   clearTimeout(timer);
+  if (p.adopted) {
+    p.adopted = false;
+    note(p, "stopped");
+    savePids();
+  }
 }
 
 export async function startAll() {
@@ -221,17 +333,24 @@ export function state(): ClusterState {
   const out: Record<string, ProcStatus> = {};
   for (const id of ids) {
     const p = procs.get(id);
+    const up = running(p);
+    if (p?.adopted && !up) {
+      // An adopted process ended on its own; we can't know its exit code.
+      p.adopted = false;
+      savePids();
+    }
     let stale = false;
-    if (p?.child && id !== "build") {
+    if (p && up && id !== "build") {
       stale = spec(id, cfg).args.join("\0") !== p.args.join("\0");
     }
     out[id] = {
-      running: !!p?.child,
+      running: up,
+      adopted: up && !!p?.adopted,
       pid: p?.pid,
       startedAt: p?.startedAt,
-      uptimeSec: p?.child && p.startedAt ? Math.floor((Date.now() - p.startedAt) / 1000) : undefined,
+      uptimeSec: up && p?.startedAt ? Math.floor((Date.now() - p.startedAt) / 1000) : undefined,
       exitCode: p?.exitCode,
-      output: p?.output ?? [],
+      output: p?.log ? lastLines(p.log, OUTPUT_LINES) : (p?.output ?? []),
       stale,
     };
   }
